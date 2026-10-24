@@ -16,8 +16,9 @@ spec:
     historyWindow: {{ $p.cooldown.historyWindow }}
   recommendationTTL: {{ $p.recommendationTTL }}
   watchdog:
-    gracePeriod: {{ $p.watchdog.gracePeriod }}
-    blacklistFor: {{ $p.watchdog.blacklistFor }}
+    # dig: tolerate values from an older release (helm upgrade --reuse-values) that have no policy.watchdog
+    gracePeriod: {{ dig "watchdog" "gracePeriod" "2m" $p }}
+    blacklistFor: {{ dig "watchdog" "blacklistFor" "1h" $p }}
   scoreAnnotation: {{ $p.scoreAnnotation }}
   softTainter: {{ $p.softTainter }}
   paused: {{ $p.paused }}

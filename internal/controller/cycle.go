@@ -37,8 +37,9 @@ type Cycle struct {
 	Exec   *executor.Executor
 	Log    logr.Logger
 
-	mu        sync.Mutex
-	blacklist map[planner.Pair]time.Time
+	mu           sync.Mutex
+	blacklist    map[planner.Pair]time.Time
+	blacklistFor time.Duration
 }
 
 func (c *Cycle) NeedLeaderElection() bool { return true }
@@ -51,6 +52,16 @@ func (c *Cycle) Blacklist(p planner.Pair, until time.Time) {
 		c.blacklist = map[planner.Pair]time.Time{}
 	}
 	c.blacklist[p] = until
+}
+
+// BlacklistFor returns the policy's blacklist duration as of the last cycle (default 1h).
+func (c *Cycle) BlacklistFor() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.blacklistFor <= 0 {
+		return time.Hour
+	}
+	return c.blacklistFor
 }
 
 func (c *Cycle) blacklistCopy(now time.Time) map[planner.Pair]time.Time {
@@ -192,8 +203,12 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 	kube.ApplyReservations(nodes, reservations, func(k planner.Key) float64 { return demandOf[k] }, start, settle)
 
 	// ---- watchdog: our own migrations that never found a node -----------------------------------
+	blacklistFor := kube.Duration(pol.Spec.Watchdog.BlacklistFor, time.Hour)
+	c.mu.Lock()
+	c.blacklistFor = blacklistFor
+	c.mu.Unlock()
 	wd := &watchdog.Watchdog{Client: c.Client, Exec: c.Exec, Blacklist: c.Blacklist, Log: log.WithName("watchdog")}
-	if n, err := wd.Run(ctx, migs.Moves, start, kube.Duration(pol.Spec.Watchdog.GracePeriod, 2*time.Minute), kube.Duration(pol.Spec.Watchdog.BlacklistFor, time.Hour)); err != nil {
+	if n, err := wd.Run(ctx, migs.Moves, start, kube.Duration(pol.Spec.Watchdog.GracePeriod, 2*time.Minute), blacklistFor); err != nil {
 		return interval, err
 	} else if n > 0 {
 		metricStalled.Add(float64(n))

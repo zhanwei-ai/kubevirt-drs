@@ -15,6 +15,7 @@ import (
 
 	drsv1alpha1 "github.com/zhanwei-ai/kubevirt-drs/api/v1alpha1"
 	"github.com/zhanwei-ai/kubevirt-drs/internal/executor"
+	"github.com/zhanwei-ai/kubevirt-drs/internal/planner"
 )
 
 // RecommendationReconciler applies a recommendation the moment spec.approved turns true (Manual mode's
@@ -23,6 +24,11 @@ type RecommendationReconciler struct {
 	Client client.Client
 	Exec   *executor.Executor
 	Log    logr.Logger
+	// Blacklist is the cycle's blacklist; a pinned migration KubeVirt itself fails before it ever started
+	// (its target pod never scheduled, KubeVirt's own pending timeout fired first) bans the pair the same
+	// way the watchdog does. BlacklistFor is the policy's duration.
+	Blacklist    func(planner.Pair, time.Time)
+	BlacklistFor func() time.Duration
 }
 
 func (r *RecommendationReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -68,7 +74,22 @@ func (r *RecommendationReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			return ctrl.Result{}, err
 		}
+		if mig.Status.Phase == kubevirtv1.MigrationFailed && r.Blacklist != nil && neverStarted(&mig) {
+			d := time.Hour
+			if r.BlacklistFor != nil {
+				d = r.BlacklistFor()
+			}
+			r.Blacklist(planner.Pair{Source: rec.Spec.SourceNode, Target: rec.Spec.TargetNode}, time.Now().Add(d))
+			log.Info("pinned migration failed before it started: pair blacklisted", "source", rec.Spec.SourceNode, "target", rec.Spec.TargetNode, "for", d)
+		}
 		return ctrl.Result{}, r.Exec.SyncOutcome(ctx, &rec, &mig)
 	}
 	return ctrl.Result{}, nil
+}
+
+// neverStarted: the migration failed without ever transferring (no start timestamp): the target pod did not
+// schedule, so the target node is the problem, not the VM.
+func neverStarted(mig *kubevirtv1.VirtualMachineInstanceMigration) bool {
+	ms := mig.Status.MigrationState
+	return ms == nil || ms.StartTimestamp == nil
 }
