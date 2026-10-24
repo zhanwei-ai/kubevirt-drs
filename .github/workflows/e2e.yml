@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   kind:
-    name: kind + KubeVirt ${{ matrix.kubevirt }} (emulation)
+    name: kind + KubeVirt ${{ matrix.kubevirt }} (emulation)   # one per matrix entry; "e2e" below is the stable name to require
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -36,3 +36,15 @@ jobs:
           KUBEVIRT_VERSION: ${{ matrix.kubevirt }}
           KIND_NODE_IMAGE: ${{ matrix.node_image }}
         run: test/e2e/run.sh
+
+  # Stable aggregate: the branch ruleset requires this one name, however the matrix above grows.
+  e2e:
+    name: e2e
+    needs: kind
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every matrix entry passed
+        run: |
+          [ "${{ needs.kind.result }}" = success ] || { echo "::error::e2e matrix result: ${{ needs.kind.result }}"; exit 1; }
+          echo "e2e matrix: success"
