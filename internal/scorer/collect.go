@@ -28,8 +28,12 @@ type VMMetrics struct {
 }
 
 // Metrics is one cycle's read of the recording rules plus the node-level numbers the planner needs.
+//
+// VM is keyed by VMI and then by node: after a live migration the old node's series linger for the length
+// of the smoothing window (avg_over_time keeps reading history Prometheus has already marked stale), so a
+// VMI can have two entries for a few minutes. For(key, node) picks the one for the node the VMI runs on.
 type Metrics struct {
-	VM map[planner.Key]*VMMetrics
+	VM map[planner.Key]map[string]*VMMetrics
 	// NodeVMDemand: cores used by the VMs on each node.
 	NodeVMDemand map[string]float64
 	// NodeScore: node:drs_score:avg where it exists.
@@ -44,7 +48,7 @@ type Metrics struct {
 // aggregate; the score formula itself is never evaluated here.
 func Collect(ctx context.Context, q Querier, smoothing time.Duration) (*Metrics, error) {
 	m := &Metrics{
-		VM:                  map[planner.Key]*VMMetrics{},
+		VM:                  map[planner.Key]map[string]*VMMetrics{},
 		NodeVMDemand:        map[string]float64{},
 		NodeScore:           map[string]float64{},
 		NodeRequestedCPU:    map[string]float64{},
@@ -77,13 +81,16 @@ func Collect(ctx context.Context, q Querier, smoothing time.Duration) (*Metrics,
 			if math.IsNaN(x) || math.IsInf(x, 0) {
 				continue
 			}
-			v := m.VM[k]
-			if v == nil {
-				v = &VMMetrics{}
-				m.VM[k] = v
+			n := string(s.Metric["node"])
+			byNode := m.VM[k]
+			if byNode == nil {
+				byNode = map[string]*VMMetrics{}
+				m.VM[k] = byNode
 			}
-			if n := string(s.Metric["node"]); n != "" {
-				v.Node = n
+			v := byNode[n]
+			if v == nil {
+				v = &VMMetrics{Node: n}
+				byNode[n] = v
 			}
 			pq.set(v, x)
 		}
@@ -114,11 +121,30 @@ func Collect(ctx context.Context, q Querier, smoothing time.Duration) (*Metrics,
 	return m, nil
 }
 
-// ClusterScore is the vCPU-weighted average score of the VMs that have one, or -1 when none has.
-func (m *Metrics) ClusterScore() float64 {
+// For returns the metrics of a VMI on the node it currently runs on. When no entry carries that node
+// (series not relabelled yet, or node unknown) and exactly one entry exists, that one is returned.
+func (m *Metrics) For(key planner.Key, node string) *VMMetrics {
+	byNode := m.VM[key]
+	if len(byNode) == 0 {
+		return nil
+	}
+	if v, ok := byNode[node]; ok {
+		return v
+	}
+	if len(byNode) == 1 {
+		for _, v := range byNode {
+			return v
+		}
+	}
+	return nil
+}
+
+// ClusterScore is the vCPU-weighted average over the given (VMI, node) pairs, or -1 when none has a score.
+func (m *Metrics) ClusterScore(placement map[planner.Key]string) float64 {
 	var num, den float64
-	for _, v := range m.VM {
-		if !v.HasScore {
+	for key, node := range placement {
+		v := m.For(key, node)
+		if v == nil || !v.HasScore {
 			continue
 		}
 		w := float64(v.VCPUs)

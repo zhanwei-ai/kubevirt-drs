@@ -11,7 +11,7 @@
 //   - nodes: list/watch for fits; patch only for the optional soft tainter.
 //   - pods: virt-launcher pods (label-filtered cache) for requests and the descheduler opt-out annotation.
 //   - network-attachment-definitions: a target must offer the networks the VM is attached to.
-//   - events: one per applied / failed recommendation.
+//   - events (core and events.k8s.io; the manager's recorder uses the new API): one per applied recommendation.
 //   - leases: leader election when more than one replica runs.
 //
 // +kubebuilder:rbac:groups=kubevirt.io,resources=virtualmachineinstances,verbs=get;list;watch;patch
@@ -23,6 +23,7 @@
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=k8s.cni.cncf.io,resources=network-attachment-definitions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=drs.zhanwei.ai,resources=drspolicies;drsrecommendations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=drs.zhanwei.ai,resources=drspolicies/status;drsrecommendations/status,verbs=get;update;patch

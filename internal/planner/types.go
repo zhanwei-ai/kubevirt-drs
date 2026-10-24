@@ -44,6 +44,10 @@ type VM struct {
 	Pod *corev1.Pod
 	// HasPendingRecommendation: a Pending DRSRecommendation already exists for this VM.
 	HasPendingRecommendation bool
+	// MigrationInFlight: a VirtualMachineInstanceMigration for this VM is not finished (ours or anyone's).
+	// Found on the lab cluster: without it the cycle after an Apply re-recommended the same VM, whose
+	// score had not yet recovered because it was still being copied.
+	MigrationInFlight bool
 }
 
 // Node is a schedulable target as the planner sees it.

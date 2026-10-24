@@ -41,18 +41,44 @@ func TestCollectJoinsPerVMSeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := m.VM[planner.Key{Namespace: "default", Name: "a1"}]
+	key := planner.Key{Namespace: "default", Name: "a1"}
+	v := m.For(key, "n1")
 	if v == nil || !v.HasScore || v.Score != 42.5 || v.CPUReady != 0.18 || v.VCPUs != 4 || v.Node != "n1" {
 		t.Fatalf("bad VM metrics: %+v", v)
+	}
+	if m.For(key, "other") == nil {
+		t.Fatal("a single entry must be returned for an unknown node")
 	}
 	if m.NodeScore["n1"] != 42.5 {
 		t.Fatalf("node score missing: %+v", m.NodeScore)
 	}
-	if cs := m.ClusterScore(); cs != 42.5 {
+	if cs := m.ClusterScore(map[planner.Key]string{key: "n1"}); cs != 42.5 {
 		t.Fatalf("cluster score %v", cs)
 	}
 	p := RunProbe(context.Background(), q)
 	if !p.Reachable || !p.ScoreRuleLoaded {
 		t.Fatalf("probe %+v", p)
+	}
+}
+
+// After a live migration the smoothed score has one series per node for a few minutes; the entry of the
+// node the VMI runs on must win, never "the last sample seen".
+func TestForPicksTheCurrentNodeAfterAMigration(t *testing.T) {
+	q := fakeQuerier{answers: map[string]model.Vector{
+		"vmi:drs_score": {sample("default", "vm1", "old", 18.2), sample("default", "vm1", "new", 97.1)},
+	}}
+	m, err := Collect(context.Background(), q, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := planner.Key{Namespace: "default", Name: "vm1"}
+	if v := m.For(key, "new"); v == nil || v.Score != 97.1 {
+		t.Fatalf("want the new node's score, got %+v", v)
+	}
+	if v := m.For(key, "old"); v == nil || v.Score != 18.2 {
+		t.Fatalf("want the old node's score, got %+v", v)
+	}
+	if m.For(key, "elsewhere") != nil {
+		t.Fatal("two entries and no node match must return nil, not a guess")
 	}
 }
