@@ -64,7 +64,7 @@ func main() {
 		}
 		return &s, nil
 	}
-	http.HandleFunc("/-/ready", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
+	http.HandleFunc("/-/ready", func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintln(w, "ok") })
 	http.HandleFunc("/api/v1/rules", func(w http.ResponseWriter, _ *http.Request) {
 		s, err := load()
 		if err != nil {
