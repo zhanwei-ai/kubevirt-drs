@@ -23,11 +23,26 @@ func TestHot(t *testing.T) {
 		{Name: "reserved", AllocatableCPU: 4, VMDemandCPU: 2, ReservedCPU: 1.5},
 		{Name: "fine", AllocatableCPU: 4, VMDemandCPU: 1, Score: 95, HasScore: true},
 	}
-	hot := Hot(nodes, pol)
+	hot := Hot(nodes, pol, nil)
 	for name, want := range map[string]bool{"lowscore": true, "busy": true, "reserved": true, "fine": false} {
 		if hot[name] != want {
 			t.Errorf("%s hot=%v want %v", name, hot[name], want)
 		}
+	}
+}
+
+func TestHotHysteresis(t *testing.T) {
+	pol := planner.Policy{Level: planner.LevelFor(drsv1alpha1.ThresholdDefault), TargetHeadroom: 0.8} // floor 70
+	n := []planner.Node{{Name: "n", AllocatableCPU: 4, VMDemandCPU: 1, Score: 74, HasScore: true}}
+	if Hot(n, pol, nil)["n"] {
+		t.Fatal("74 is above the floor: not hot when not tainted")
+	}
+	if !Hot(n, pol, map[string]bool{"n": true})["n"] {
+		t.Fatal("74 is inside the hysteresis band: a tainted node stays hot")
+	}
+	n[0].Score = 81
+	if Hot(n, pol, map[string]bool{"n": true})["n"] {
+		t.Fatal("81 is past floor+10: the taint comes off")
 	}
 }
 

@@ -16,25 +16,49 @@ import (
 	"github.com/zhanwei-ai/kubevirt-drs/internal/planner"
 )
 
+// Hysteresis keeps the taint from flapping around the thresholds: a node becomes hot at the floor and stays
+// hot until it is this many points above it (and this much under the headroom).
+const (
+	ScoreHysteresis    = 10.0
+	HeadroomHysteresis = 0.10
+)
+
 // Hot returns the nodes that should carry the taint: VMs on it score below the threshold floor, or VM
-// demand (plus reserved moves) exceeds the target headroom.
-func Hot(nodes []planner.Node, pol planner.Policy) map[string]bool {
+// demand (plus reserved moves) exceeds the target headroom. A node that already carries the taint
+// (current) keeps it until it has recovered past the hysteresis margins.
+func Hot(nodes []planner.Node, pol planner.Policy, current map[string]bool) map[string]bool {
 	limit := pol.TargetHeadroom
 	if limit <= 0 {
 		limit = 0.8
 	}
+	floor := float64(pol.Level.MinScore)
 	hot := map[string]bool{}
 	for i := range nodes {
 		n := &nodes[i]
-		if n.HasScore && n.Score < float64(pol.Level.MinScore) {
+		scoreLimit, demandLimit := floor, limit
+		if current[n.Name] {
+			scoreLimit, demandLimit = floor+ScoreHysteresis, limit-HeadroomHysteresis
+		}
+		if n.HasScore && n.Score < scoreLimit {
 			hot[n.Name] = true
 			continue
 		}
-		if n.AllocatableCPU > 0 && (n.VMDemandCPU+n.ReservedCPU)/n.AllocatableCPU > limit {
+		if n.AllocatableCPU > 0 && (n.VMDemandCPU+n.ReservedCPU)/n.AllocatableCPU > demandLimit {
 			hot[n.Name] = true
 		}
 	}
 	return hot
+}
+
+// Tainted returns the nodes that carry the taint now.
+func Tainted(nodes []corev1.Node) map[string]bool {
+	out := map[string]bool{}
+	for i := range nodes {
+		if hasTaint(&nodes[i]) {
+			out[nodes[i].Name] = true
+		}
+	}
+	return out
 }
 
 // Reconcile adds the taint to hot nodes and removes it elsewhere; with enabled=false it removes it from

@@ -367,12 +367,17 @@ func Duration(d *metav1.Duration, def time.Duration) time.Duration {
 type Reservation struct {
 	VMI            planner.Key
 	Source, Target string
+	// Pending: a recommendation nobody has approved yet. It reserves the target (so the next candidate is
+	// not sent to the same node) but does not settle the source: nothing has moved, the other VMs there
+	// may still be recommended (Manual mode lists every beneficial move, like VMware).
+	Pending bool
 	// Done is when a completed move finished (zero for pending / in flight).
 	Done time.Time
 }
 
 // ApplyReservations folds proposed and recent moves into the planner nodes: the target gets the VM's demand
-// reserved, the source settles for `window` after the move (in-flight: from now). demand gives a VM's cores.
+// reserved; the source of an in-flight or just-completed move settles for `window` (in-flight: from now).
+// demand gives a VM's cores.
 func ApplyReservations(nodes []planner.Node, res []Reservation, demand func(planner.Key) float64, now time.Time, window time.Duration) {
 	byName := make(map[string]*planner.Node, len(nodes))
 	for i := range nodes {
@@ -384,6 +389,9 @@ func ApplyReservations(nodes []planner.Node, res []Reservation, demand func(plan
 		}
 		if t := byName[r.Target]; t != nil {
 			t.ReservedCPU += demand(r.VMI)
+		}
+		if r.Pending {
+			continue
 		}
 		if s := byName[r.Source]; s != nil && window > 0 {
 			until := now.Add(window)

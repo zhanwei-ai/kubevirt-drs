@@ -169,7 +169,7 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 		r := &pendingRecs[i]
 		k := planner.Key{Namespace: r.Namespace, Name: r.Spec.VMI}
 		pending[k] = true
-		reservations = append(reservations, kube.Reservation{VMI: k, Source: r.Spec.SourceNode, Target: r.Spec.TargetNode})
+		reservations = append(reservations, kube.Reservation{VMI: k, Source: r.Spec.SourceNode, Target: r.Spec.TargetNode, Pending: true})
 	}
 	nPending := len(pendingRecs)
 	settle := kube.Duration(pol.Spec.Scoring.SmoothingWindow, 5*time.Minute)
@@ -296,7 +296,7 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 
 	// ---- soft tainter -----------------------------------------------------------------------------
 	softTainter := pol.Spec.SoftTainter != nil && *pol.Spec.SoftTainter
-	hotNodes, changedTaints, err := tainter.Reconcile(ctx, c.Client, nodeList.Items, tainter.Hot(nodes, pp), softTainter)
+	hotNodes, changedTaints, err := tainter.Reconcile(ctx, c.Client, nodeList.Items, tainter.Hot(nodes, pp, tainter.Tainted(nodeList.Items)), softTainter)
 	if err != nil {
 		return interval, err
 	}
