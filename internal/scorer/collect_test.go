@@ -32,10 +32,11 @@ func sample(ns, name, node string, v float64) *model.Sample {
 
 func TestCollectJoinsPerVMSeries(t *testing.T) {
 	q := fakeQuerier{answers: map[string]model.Vector{
-		"vmi:drs_score":           {sample("default", "a1", "n1", 42.5)},
-		"vmi:drs_cpu_ready:ratio": {sample("default", "a1", "n1", 0.18)},
-		"vmi:drs_vcpu:count":      {sample("default", "a1", "n1", 4)},
-		"node:drs_score:avg":      {{Metric: model.Metric{"node": "n1"}, Value: 42.5}},
+		"vmi:drs_score":                        {sample("default", "a1", "n1", 42.5)},
+		"vmi:drs_cpu_ready:ratio":              {sample("default", "a1", "n1", 0.18)},
+		"vmi:drs_vcpu:count":                   {sample("default", "a1", "n1", 4)},
+		"node:drs_score:avg":                   {{Metric: model.Metric{"node": "n1"}, Value: 42.5}},
+		"migration_memory_transfer_rate_bytes": {{Metric: model.Metric{}, Value: 41943040}},
 	}, groups: []string{ScoreRuleGroup}}
 	m, err := Collect(context.Background(), q, 5*time.Minute)
 	if err != nil {
@@ -54,6 +55,9 @@ func TestCollectJoinsPerVMSeries(t *testing.T) {
 	}
 	if cs := m.ClusterScore(map[planner.Key]string{key: "n1"}); cs != 42.5 {
 		t.Fatalf("cluster score %v", cs)
+	}
+	if m.ObservedTransferRate != 41943040 {
+		t.Fatalf("observed transfer rate %v", m.ObservedTransferRate)
 	}
 	p := RunProbe(context.Background(), q)
 	if !p.Reachable || !p.ScoreRuleLoaded {

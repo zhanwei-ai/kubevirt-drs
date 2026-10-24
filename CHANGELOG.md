@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+### Fixed
+- The blacklist survives a controller restart: it is reloaded from `status.blacklistedPairs` on the first cycle.
+
+### Changed
+- Cost estimate: the migration time now divides guest memory by the slower of the configured
+  `bandwidthPerMigration` and the median transfer rate recent migrations actually achieved
+  (`kubevirt_vmi_migration_memory_transfer_rate_bytes`, 24h window).
+
 ## [0.3.0] - 2026-10-25
 
 The safety layer for automatic mode, verified on the lab cluster: a stuck pinned migration cleaned up in 2m44s, two squeezed VMs sent to two different targets, the hot taint on and off with the load.
