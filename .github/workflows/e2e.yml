@@ -1,0 +1,50 @@
+name: e2e
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kind:
+    name: kind + KubeVirt ${{ matrix.kubevirt }} (emulation)   # one per matrix entry; "e2e" below is the stable name to require
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # node image and kind binary must come from the same kind release (kind v0.33.0 ships these digests);
+          # v1.36 is the newest Kubernetes in KubeVirt 1.9's support window.
+          - kubevirt: v1.9.1
+            node_image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.1
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+          version: v0.33.0
+      - name: Run the e2e
+        env:
+          KUBEVIRT_VERSION: ${{ matrix.kubevirt }}
+          KIND_NODE_IMAGE: ${{ matrix.node_image }}
+        run: test/e2e/run.sh
+
+  # Stable aggregate: the branch ruleset requires this one name, however the matrix above grows.
+  e2e:
+    name: e2e
+    needs: kind
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every matrix entry passed
+        run: |
+          [ "${{ needs.kind.result }}" = success ] || { echo "::error::e2e matrix result: ${{ needs.kind.result }}"; exit 1; }
+          echo "e2e matrix: success"

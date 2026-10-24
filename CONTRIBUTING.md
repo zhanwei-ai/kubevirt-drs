@@ -28,7 +28,7 @@ make chart-lint rules-check   # helm lint + template, promtool check rules on th
 | --- | --- | --- |
 | unit | `internal/**/*_test.go` | planner decisions on table-driven scenarios (the VM1/VM2 "moved the wrong VM" case is a regression test) |
 | envtest | `internal/**` | reconcilers against a real API server |
-| e2e | `test/e2e` | kind + KubeVirt (software emulation) + a fake Prometheus: wiring, not performance |
+| e2e | `test/e2e/run.sh` (`make e2e`, CI workflow `e2e`) | kind with two workers + KubeVirt in software emulation + a scripted stand-in for Prometheus (`test/e2e/fakeprom`): Prometheus says a VM suffers → recommendation → pinned migration → the VM runs on the other node with the same UID → healthy again, nothing else moves. Wiring, not performance |
 | lab | your cluster | calibration with stress-ng; see `docs/calibration.md` |
 
 ## Code of conduct

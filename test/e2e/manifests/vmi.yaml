@@ -1,0 +1,20 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachineInstance
+metadata:
+  name: vm1
+  namespace: default
+spec:
+  evictionStrategy: LiveMigrate
+  domain:
+    cpu: {cores: 1}
+    memory: {guest: 128Mi}
+    devices:
+      disks:
+        - {name: root, disk: {bus: virtio}}
+      interfaces:
+        - {name: default, masquerade: {}}
+  networks:
+    - {name: default, pod: {}}
+  volumes:
+    - name: root
+      containerDisk: {image: quay.io/kubevirt/cirros-container-disk-demo:__KUBEVIRT_VERSION__}
