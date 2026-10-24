@@ -18,8 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # node image and kind binary must come from the same kind release (kind v0.33.0 ships these digests);
+          # v1.36 is the newest Kubernetes in KubeVirt 1.9's support window.
           - kubevirt: v1.9.1
-            node_image: ""   # empty = the default node image of this kind release (image and binary must match)
+            node_image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
