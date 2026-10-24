@@ -42,6 +42,9 @@ type Metrics struct {
 	// missing here has unknown requests and the planner skips the resource fit check for it.
 	NodeRequestedCPU    map[string]float64
 	NodeRequestedMemory map[string]float64
+	// ObservedTransferRate: median bytes/s recent live migrations actually achieved (24h window), 0 when
+	// no migration happened. Feeds the cost estimate together with the configured bandwidth cap.
+	ObservedTransferRate float64
 }
 
 // Collect runs the handful of instant queries a cycle needs. Every query reads a recording rule or a cheap
@@ -116,6 +119,17 @@ func Collect(ctx context.Context, q Querier, smoothing time.Duration) (*Metrics,
 				continue
 			}
 			pq.into[n] = x
+		}
+	}
+	// kubevirt_vmi_migration_memory_transfer_rate_bytes has samples only while a migration runs; the
+	// 24h avg_over_time per VMI is that VMI's recent average rate, the median across VMIs is the cluster's.
+	vec, err := q.Query(ctx, `quantile(0.5, avg_over_time(kubevirt_vmi_migration_memory_transfer_rate_bytes[24h]) > 0)`)
+	if err != nil {
+		return nil, err
+	}
+	if len(vec) == 1 {
+		if x := float64(vec[0].Value); x > 0 && !math.IsNaN(x) && !math.IsInf(x, 0) {
+			m.ObservedTransferRate = x
 		}
 	}
 	return m, nil

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +41,7 @@ type Cycle struct {
 	mu           sync.Mutex
 	blacklist    map[planner.Pair]time.Time
 	blacklistFor time.Duration
+	restored     bool
 }
 
 func (c *Cycle) NeedLeaderElection() bool { return true }
@@ -52,6 +54,40 @@ func (c *Cycle) Blacklist(p planner.Pair, until time.Time) {
 		c.blacklist = map[planner.Pair]time.Time{}
 	}
 	c.blacklist[p] = until
+}
+
+// blacklistEntry formats one pair for status.blacklistedPairs; parseBlacklistEntry is its inverse.
+func blacklistEntry(p planner.Pair, until time.Time) string {
+	return fmt.Sprintf("%s->%s until %s", p.Source, p.Target, until.UTC().Format(time.RFC3339))
+}
+
+func parseBlacklistEntry(s string) (planner.Pair, time.Time, bool) {
+	var src, dst, ts string
+	if _, err := fmt.Sscanf(s, "%s until %s", &src, &ts); err != nil {
+		return planner.Pair{}, time.Time{}, false
+	}
+	i := strings.Index(src, "->")
+	if i < 0 {
+		return planner.Pair{}, time.Time{}, false
+	}
+	src, dst = src[:i], src[i+2:]
+	until, err := time.Parse(time.RFC3339, ts)
+	if err != nil || src == "" || dst == "" {
+		return planner.Pair{}, time.Time{}, false
+	}
+	return planner.Pair{Source: src, Target: dst}, until, true
+}
+
+// restoreBlacklist loads the pairs recorded in the status that have not expired yet. Returns how many.
+func (c *Cycle) restoreBlacklist(entries []string, now time.Time) int {
+	n := 0
+	for _, e := range entries {
+		if p, until, ok := parseBlacklistEntry(e); ok && until.After(now) {
+			c.Blacklist(p, until)
+			n++
+		}
+	}
+	return n
 }
 
 // BlacklistFor returns the policy's blacklist duration as of the last cycle (default 1h).
@@ -114,6 +150,13 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 	}
 	interval := kube.Duration(pol.Spec.CycleInterval, time.Minute)
 	log := c.Log.WithValues("generation", pol.Generation)
+	if !c.restored {
+		// the blacklist lives in memory; the policy status is its only record across a restart
+		if n := c.restoreBlacklist(pol.Status.BlacklistedPairs, start); n > 0 {
+			log.Info("blacklist restored from the policy status", "pairs", n)
+		}
+		c.restored = true
+	}
 
 	// ---- dependencies -> conditions -------------------------------------------------------------
 	probe := scorer.RunProbe(ctx, c.Prom)
@@ -229,7 +272,7 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 		PerNodeLimit:         capInt(pol.Spec.Concurrency.PerNode, limits.ParallelNode),
 		InFlight:             migs.InFlight,
 		TargetHeadroom:       0.8,
-		BandwidthBytesPerSec: limits.BandwidthBytesPerSec,
+		BandwidthBytesPerSec: costBandwidth(limits.BandwidthBytesPerSec, metrics.ObservedTransferRate),
 		Blacklist:            c.blacklistCopy(start),
 		SettleWindow:         settle,
 		Now:                  start,
@@ -307,7 +350,7 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 	pol.Status.HotNodes = hotNodes
 	pol.Status.BlacklistedPairs = nil
 	for pair, until := range c.blacklistCopy(start) {
-		pol.Status.BlacklistedPairs = append(pol.Status.BlacklistedPairs, fmt.Sprintf("%s->%s until %s", pair.Source, pair.Target, until.UTC().Format(time.RFC3339)))
+		pol.Status.BlacklistedPairs = append(pol.Status.BlacklistedPairs, blacklistEntry(pair, until))
 	}
 	sort.Strings(pol.Status.BlacklistedPairs)
 
@@ -388,4 +431,15 @@ func errString(err error, ok string) string {
 		return err.Error()
 	}
 	return ok
+}
+
+// costBandwidth is the rate the cost estimate divides by: the cluster's cap when set, lowered to what
+// recent migrations actually achieved when that was slower (shared NIC, slow storage); the planner's default
+// when neither is known.
+func costBandwidth(capBytesPerSec, observedBytesPerSec float64) float64 {
+	bw := capBytesPerSec
+	if observedBytesPerSec > 0 && (bw <= 0 || observedBytesPerSec < bw) {
+		bw = observedBytesPerSec
+	}
+	return bw
 }
