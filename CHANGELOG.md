@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-24
+
+The brain, verified end to end on a 3-node KubeVirt 1.9.1 cluster in Manual mode (see the fixes below).
+
 ### Added
 - The brain, Manual mode (`controller.enabled=true`): a once-a-minute cycle reads the recording rules, builds
   the planner's view (running VMIs, their virt-launcher pods, nodes, every in-flight migration, the KubeVirt
@@ -20,8 +24,15 @@ All notable changes to this project are documented here. The format follows Keep
 - Metrics `kubevirt_drs_*` (ready, cycle duration, cycles, recommendations, migrations, cluster score, in-flight).
 - VMI annotation `drs.zhanwei.ai/score` (5-point buckets, `scoreAnnotation: false` to disable).
 
+### Fixed (found on the first real run)
+- A cordoned node is not a rule violation: node-lifecycle taints no longer trigger priority-1 moves (they still exclude targets).
+- A VM with a migration in flight is never recommended again.
+- Pending recommendations are re-validated every cycle and expire with a reason when the VM moved, recovered, or the target no longer helps.
+- Events were rejected: RBAC for `events.k8s.io` added.
+- Collected metrics are keyed by (VMI, node) so the old node's lingering series after a migration cannot win.
+
 ### Not yet
-- Watchdog (stalled pinned migrations), blacklist, soft tainter, calibrated levels: v0.3.0.
+- Watchdog (stalled pinned migrations), blacklist, soft tainter, settle period for proposed moves, calibrated levels: v0.3.0.
 
 ## [0.1.0] - 2026-10-24
 
@@ -33,5 +44,6 @@ Score-only release: installs the DRS Score, moves nothing. The controller arrive
 - Design docs and ADRs.
 - Release pipeline: image and chart on GHCR, cosign keyless signatures, CycloneDX SBOM attestation, GitHub release with a post-publish verification job.
 
-[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zhanwei-ai/kubevirt-drs/releases/tag/v0.1.0
