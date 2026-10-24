@@ -1,0 +1,44 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: stress-1
+  labels:
+    app: kubevirt-drs-lab
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels:
+        app: kubevirt-drs-lab
+    spec:
+      evictionStrategy: LiveMigrate
+      domain:
+        cpu:
+          cores: 2
+        memory:
+          guest: 2Gi
+        devices:
+          disks:
+            - name: root
+              disk:
+                bus: virtio
+            - name: cloudinit
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: root
+          containerDisk:
+            image: quay.io/containerdisks/fedora:42
+        - name: cloudinit
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              ssh_authorized_keys:
+                - ssh-ed25519 AAAA_REPLACE_ME your@key
+              packages: [stress-ng, sysbench]

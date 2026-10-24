@@ -1,0 +1,27 @@
+kubevirt-drs {{ .Chart.Version }} installed in namespace {{ .Release.Namespace }}.
+
+{{- if .Values.prometheusRule.enabled }}
+
+DRS Score: PrometheusRule {{ include "kubevirt-drs.fullname" . }}-score (group kubevirt-drs.score, every {{ .Values.prometheusRule.interval }}).
+Check that Prometheus loaded it (needs the ruleSelector to match; see prometheusRule.additionalLabels):
+
+  vmi:drs_score            score 0..100 per running VM (labels name, namespace, node)
+  node:drs_score:avg       vCPU-weighted node average
+  cluster:drs_score:avg    cluster average
+
+If vmi:drs_score has no series after two minutes: kubevirt_vmi_vcpu_delay_seconds_total must exist first
+(KubeVirt's ServiceMonitor scraped), then look at the Prometheus Operator's ruleSelector.
+{{- end }}
+
+{{- if .Values.controller.enabled }}
+
+Controller: Deployment {{ include "kubevirt-drs.fullname" . }}, DRSPolicy "default"
+({{ .Values.policy.automationLevel }} / {{ .Values.policy.migrationThreshold }}).
+
+  kubectl get drspolicy default
+  kubectl get drsrec -A          # recommendations; approve one with:
+  kubectl -n <ns> patch drsrec <name> --type merge -p '{"spec":{"approved":true}}'
+{{- else }}
+
+The controller is off (controller.enabled=false): this release scores VMs and does not move any.
+{{- end }}

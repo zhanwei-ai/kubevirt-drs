@@ -1,0 +1,17 @@
+{{- if .Values.controller.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubevirt-drs.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubevirt-drs.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "kubevirt-drs.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+{{- end }}

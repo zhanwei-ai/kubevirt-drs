@@ -1,0 +1,21 @@
+{{- if and .Values.controller.enabled .Values.policy.create }}
+{{- $p := .Values.policy }}
+apiVersion: drs.zhanwei.ai/v1alpha1
+kind: DRSPolicy
+metadata:
+  name: default
+  labels:
+    {{- include "kubevirt-drs.labels" . | nindent 4 }}
+spec:
+  automationLevel: {{ $p.automationLevel }}
+  migrationThreshold: {{ $p.migrationThreshold }}
+  cycleInterval: {{ $p.cycleInterval }}
+  cooldown:
+    base: {{ $p.cooldown.base }}
+    max: {{ $p.cooldown.max }}
+    historyWindow: {{ $p.cooldown.historyWindow }}
+  recommendationTTL: {{ $p.recommendationTTL }}
+  scoreAnnotation: {{ $p.scoreAnnotation }}
+  softTainter: {{ $p.softTainter }}
+  paused: {{ $p.paused }}
+{{- end }}

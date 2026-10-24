@@ -1,0 +1,22 @@
+{{- if and .Values.controller.enabled .Values.controller.serviceMonitor.enabled }}
+{{- if not (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor") }}
+{{- fail "kubevirt-drs: controller.serviceMonitor.enabled needs the Prometheus Operator CRDs" }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "kubevirt-drs.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubevirt-drs.labels" . | nindent 4 }}
+    {{- with .Values.controller.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "kubevirt-drs.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.controller.serviceMonitor.interval }}
+{{- end }}

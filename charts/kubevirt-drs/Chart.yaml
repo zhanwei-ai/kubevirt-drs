@@ -1,0 +1,19 @@
+apiVersion: v2
+name: kubevirt-drs
+description: >-
+  VMware DRS-style VM scoring and live-migration balancing for KubeVirt. Ships the DRS Score as Prometheus
+  recording rules (per-VM 0..100 from vCPU delay, memory reclaim, swap, page faults and packet drops) and,
+  from v0.2, the brain that turns low scores into approved or automatic live migrations.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.33.0-0"
+home: https://github.com/zhanwei-ai/kubevirt-drs
+sources:
+  - https://github.com/zhanwei-ai/kubevirt-drs
+keywords: [kubevirt, drs, live-migration, scheduling, prometheus, vmware]
+maintainers:
+  - name: Winson Chao
+    url: https://github.com/winsonchao
+annotations:
+  artifacthub.io/license: Apache-2.0

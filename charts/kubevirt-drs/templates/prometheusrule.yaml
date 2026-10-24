@@ -1,0 +1,106 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- if not (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PrometheusRule") }}
+{{- fail "kubevirt-drs: PrometheusRule (monitoring.coreos.com/v1) is not served by this cluster. Install the Prometheus Operator (e.g. kube-prometheus-stack) first, or set prometheusRule.enabled=false and load docs/examples/drs-rules.yaml into your Prometheus yourself." }}
+{{- end }}
+{{- $r := .Values.prometheusRule }}
+{{- $w := $r.rateWindow }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "kubevirt-drs.fullname" . }}-score
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubevirt-drs.labels" . | nindent 4 }}
+    {{- with $r.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  # Every input is a raw KubeVirt metric (virt-handler, label set name/namespace/node). The rules do not
+  # depend on KubeVirt's own vmi:kubevirt_vmi_* recording rules, which exist only when the KubeVirt CR sets
+  # monitorNamespace and have been renamed between releases. Rules in one group evaluate in order, so a
+  # rule may use the ones above it. See docs/scoring.md.
+  - name: kubevirt-drs.score
+    interval: {{ $r.interval }}
+    rules:
+    # ---- layer 1: per-VM suffering components, each 0..1, keyed by (name, namespace, node) ----
+    - record: vmi:drs_vcpu:count
+      expr: count by (name, namespace, node) (kubevirt_vmi_vcpu_seconds_total)
+    # share of time the VM's vCPUs spent runnable but waiting for a host core = VMware "CPU ready".
+    # kubevirt_vmi_vcpu_delay_seconds_total is libvirt's per-vCPU run_delay; no guest agent needed.
+    - record: vmi:drs_cpu_ready:ratio
+      expr: |
+        sum by (name, namespace, node) (rate(kubevirt_vmi_vcpu_delay_seconds_total[{{ $w }}]))
+        / on (name, namespace, node) vmi:drs_vcpu:count
+    # share of the guest's memory the balloon has taken back (host-caused reclaim).
+    - record: vmi:drs_mem_reclaim:ratio
+      expr: |
+        clamp_min(
+          1 - sum by (name, namespace, node) (kubevirt_vmi_memory_actual_balloon_bytes)
+              / sum by (name, namespace, node) (kubevirt_vmi_memory_domain_bytes)
+        , 0)
+    # guest swap traffic, 1.0 at swapBytesPerSecondFull.
+    - record: vmi:drs_swap:ratio
+      expr: |
+        clamp_max(
+          ( sum by (name, namespace, node) (rate(kubevirt_vmi_memory_swap_in_traffic_bytes[{{ $w }}]))
+          + sum by (name, namespace, node) (rate(kubevirt_vmi_memory_swap_out_traffic_bytes[{{ $w }}])) )
+          / {{ $r.swapBytesPerSecondFull }}
+        , 1)
+    # guest major page faults, 1.0 at pgmajfaultsPerSecondFull.
+    - record: vmi:drs_pgmajfault:ratio
+      expr: |
+        clamp_max(
+          sum by (name, namespace, node) (rate(kubevirt_vmi_memory_pgmajfault_total[{{ $w }}]))
+          / {{ $r.pgmajfaultsPerSecondFull }}
+        , 1)
+    # memory pressure = reclaim + swap + page faults, capped at 1. Swap / faults may have no series for a
+    # VM; "or reclaim * 0" substitutes 0 so the sum does not vanish.
+    - record: vmi:drs_mem_pressure:ratio
+      expr: |
+        clamp_max(
+          vmi:drs_mem_reclaim:ratio
+          + (vmi:drs_swap:ratio or vmi:drs_mem_reclaim:ratio * 0)
+          + (vmi:drs_pgmajfault:ratio or vmi:drs_mem_reclaim:ratio * 0)
+        , 1)
+    # dropped share of all packets; denominator clamped to 1 pkt/s so an idle VM is 0, not NaN.
+    - record: vmi:drs_net_drop:ratio
+      expr: |
+        sum by (name, namespace, node) (
+            rate(kubevirt_vmi_network_receive_packets_dropped_total[{{ $w }}])
+          + rate(kubevirt_vmi_network_transmit_packets_dropped_total[{{ $w }}])
+        )
+        / clamp_min(sum by (name, namespace, node) (
+            rate(kubevirt_vmi_network_receive_packets_total[{{ $w }}])
+          + rate(kubevirt_vmi_network_transmit_packets_total[{{ $w }}])
+        ), 1)
+    # ---- layer 2: the VM score 0..100; efficiencies multiplied, like VMware's VM DRS Score ----
+    - record: vmi:drs_score
+      expr: |
+        100
+        * clamp_min(1 - {{ $r.cpuReadyWeight }} * vmi:drs_cpu_ready:ratio, 0)
+        * (1 - (vmi:drs_mem_pressure:ratio or vmi:drs_cpu_ready:ratio * 0))
+        * (1 - (vmi:drs_net_drop:ratio or vmi:drs_cpu_ready:ratio * 0))
+    # ---- layer 3: node and cluster aggregates, vCPU-weighted (VMware's cluster score is weighted too) ----
+    - record: node:drs_score:avg
+      expr: |
+        sum by (node) (vmi:drs_score * on (name, namespace, node) vmi:drs_vcpu:count)
+        / sum by (node) (vmi:drs_vcpu:count)
+    - record: cluster:drs_score:avg
+      expr: |
+        sum(vmi:drs_score * on (name, namespace, node) vmi:drs_vcpu:count)
+        / sum(vmi:drs_vcpu:count)
+{{- if $r.deschedulerBridge.enabled }}
+  # descheduler's LowNodeUtilization Prometheus mode needs: a value in [0, 1], the node name in the
+  # "instance" label, and one sample for EVERY node (an empty node reads 0 = "underutilized, can receive").
+  - name: kubevirt-drs.descheduler-bridge
+    interval: {{ $r.interval }}
+    rules:
+    - record: node:drs_unhappiness:ratio
+      expr: |
+        label_replace(
+          (1 - avg_over_time(node:drs_score:avg[{{ $w }}]) / 100)
+          or (sum by (node) (kube_node_info) * 0),
+        "instance", "$1", "node", "(.+)")
+{{- end }}
+{{- end }}

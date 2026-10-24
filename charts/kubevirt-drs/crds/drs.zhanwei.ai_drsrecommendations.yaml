@@ -1,0 +1,219 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: drsrecommendations.drs.zhanwei.ai
+spec:
+  group: drs.zhanwei.ai
+  names:
+    kind: DRSRecommendation
+    listKind: DRSRecommendationList
+    plural: drsrecommendations
+    shortNames:
+    - drsrec
+    singular: drsrecommendation
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.vmi
+      name: VMI
+      type: string
+    - jsonPath: .spec.sourceNode
+      name: From
+      type: string
+    - jsonPath: .spec.targetNode
+      name: To
+      type: string
+    - jsonPath: .spec.currentScore
+      name: Score
+      type: integer
+    - jsonPath: .spec.expectedScore
+      name: Expected
+      type: integer
+    - jsonPath: .spec.priority
+      name: Prio
+      type: integer
+    - jsonPath: .spec.approved
+      name: Approved
+      type: boolean
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: DRSRecommendation is one proposed or executed live migration.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: DRSRecommendationSpec is one proposed live migration, with
+              the numbers that justify it.
+            properties:
+              approved:
+                description: |-
+                  Approved is false until a human (Manual) or the brain (FullyAutomated) says go. Setting it to true on
+                  a Pending recommendation makes the brain create the migration at once.
+                type: boolean
+              currentScore:
+                description: CurrentScore and ExpectedScore are 0..100 (vmi:drs_score
+                  now, and predicted on TargetNode).
+                format: int32
+                maximum: 100
+                minimum: 0
+                type: integer
+              estimatedCostSeconds:
+                description: EstimatedCostSeconds is the predicted migration time
+                  (guest memory / observed transfer rate).
+                format: int32
+                type: integer
+              expectedScore:
+                format: int32
+                maximum: 100
+                minimum: 0
+                type: integer
+              expiresAt:
+                description: ExpiresAt is when a still-unapproved recommendation turns
+                  Expired.
+                format: date-time
+                type: string
+              priority:
+                default: 2
+                description: |-
+                  Priority: 1 = mandatory (the VM violates a rule where it runs: node affinity, taints), 2 = load
+                  balancing. Conservative thresholds still apply priority-1 moves, like VMware's threshold level 1.
+                format: int32
+                maximum: 2
+                minimum: 1
+                type: integer
+              reason:
+                description: Reason is one human-readable line, e.g. "cpu_ready 18%
+                  on source; target has 2.6 cores free".
+                type: string
+              sourceNode:
+                minLength: 1
+                type: string
+              targetNode:
+                minLength: 1
+                type: string
+              vmi:
+                description: VMI is the VirtualMachineInstance to move (same namespace
+                  as this object).
+                minLength: 1
+                type: string
+            required:
+            - approved
+            - currentScore
+            - expectedScore
+            - reason
+            - sourceNode
+            - targetNode
+            - vmi
+            type: object
+          status:
+            description: DRSRecommendationStatus records what happened to the recommendation.
+            properties:
+              appliedAt:
+                format: date-time
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              message:
+                type: string
+              migration:
+                description: Migration is the VirtualMachineInstanceMigration created
+                  for this recommendation.
+                type: string
+              phase:
+                default: Pending
+                description: RecommendationPhase is the lifecycle of one recommendation.
+                enum:
+                - Pending
+                - Applied
+                - Dismissed
+                - Expired
+                - Failed
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

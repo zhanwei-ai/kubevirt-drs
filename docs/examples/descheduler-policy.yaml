@@ -1,0 +1,42 @@
+# A descheduler policy that balances CONTAINERS and never touches VMs. Pair it with kubevirt-drs.
+# - evictLocalStoragePods stays at its default (false): every virt-launcher pod has emptyDirs, so even
+#   without the labelSelector a stock descheduler would skip them. The selector makes it explicit and
+#   survives someone flipping evictLocalStoragePods later.
+# - LowNodeUtilization here looks at requests; for load-aware container balancing add metricsUtilization.
+apiVersion: "descheduler/v1alpha2"
+kind: "DeschedulerPolicy"
+evictionLimits:
+  node: 2
+profiles:
+  - name: containers-only
+    pluginConfig:
+      - name: DefaultEvictor
+        args:
+          evictLocalStoragePods: false
+          ignorePvcPods: false
+          nodeFit: true
+          labelSelector:
+            matchExpressions:
+              - key: kubevirt.io
+                operator: NotIn
+                values: ["virt-launcher"]
+      - name: LowNodeUtilization
+        args:
+          thresholds:
+            cpu: 40
+            memory: 40
+            pods: 40
+          targetThresholds:
+            cpu: 70
+            memory: 70
+            pods: 70
+      - name: RemoveDuplicates
+      - name: RemovePodsHavingTooManyRestarts
+        args:
+          podRestartThreshold: 10
+          includingInitContainers: true
+    plugins:
+      balance:
+        enabled: ["LowNodeUtilization", "RemoveDuplicates"]
+      deschedule:
+        enabled: ["RemovePodsHavingTooManyRestarts"]

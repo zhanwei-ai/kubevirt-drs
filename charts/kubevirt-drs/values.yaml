@@ -1,0 +1,92 @@
+# Default values for kubevirt-drs.
+# v0.1 installs the DRS Score only (controller.enabled=false). Flip the controller on with a v0.2+ image.
+
+image:
+  repository: ghcr.io/zhanwei-ai/kubevirt-drs
+  # -- Defaults to "v<appVersion>".
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+prometheus:
+  # -- Prometheus the controller queries (it reads the recording rules below). Required when
+  # controller.enabled. The default matches a kube-prometheus-stack release named "kube-prometheus-stack"
+  # in namespace "monitoring".
+  url: "http://kube-prometheus-stack-prometheus.monitoring.svc:9090"
+
+prometheusRule:
+  # -- Install the DRS Score recording rules as a PrometheusRule (needs the Prometheus Operator CRDs; the
+  # chart refuses to render without them). false = bring your own rules: docs/examples/drs-rules.yaml.
+  enabled: true
+  # -- Labels your Prometheus Operator's ruleSelector requires (e.g. {release: kube-prometheus-stack}).
+  # If vmi:drs_score never appears although the PrometheusRule exists, this is the first thing to check.
+  additionalLabels: {}
+  # -- Evaluation interval of the rule group. VMware recomputes the VM DRS Score every minute.
+  interval: 1m
+  # -- rate() window of every component.
+  rateWindow: 5m
+  # -- Score constants. Read docs/scoring.md and docs/calibration.md before changing them.
+  # 1 - cpuReadyWeight * ready_ratio: with 4, 5% vCPU ready time per vCPU scores 80, 25% scores 0.
+  cpuReadyWeight: 4
+  # -- Swap traffic (in + out, bytes/s) that counts as full memory pressure (1.0). 10 MiB/s.
+  swapBytesPerSecondFull: 10485760
+  # -- Major page faults per second that count as full memory pressure (1.0).
+  pgmajfaultsPerSecondFull: 50
+  deschedulerBridge:
+    # -- Also record node:drs_unhappiness:ratio in the shape descheduler's LowNodeUtilization Prometheus mode
+    # expects (0..1, node name in the "instance" label, one sample per node). Needs kube-state-metrics
+    # (kube_node_info). Only for clusters that keep a descheduler as the mover; see docs/coexist-with-descheduler.md.
+    enabled: false
+
+dashboard:
+  # -- Ship a Grafana dashboard as a ConfigMap (picked up by the Grafana sidecar via the label below).
+  enabled: true
+  # -- Namespace of the ConfigMap; empty = release namespace.
+  namespace: ""
+  labels:
+    grafana_dashboard: "1"
+
+controller:
+  # -- Run the brain. Needs KubeVirt (kubevirt.io/v1 served) and prometheus.url.
+  enabled: false
+  # -- More than 1 requires leaderElection=true (the chart refuses otherwise): two brains must never cycle at once.
+  replicas: 1
+  leaderElection: false
+  # -- zap log level: debug, info, error.
+  logLevel: info
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  priorityClassName: ""
+  serviceMonitor:
+    # -- Scrape the controller's own metrics (kubevirt_drs_*).
+    enabled: false
+    additionalLabels: {}
+    interval: 30s
+
+policy:
+  # -- Create the DRSPolicy singleton "default" from the values below (controller.enabled only).
+  create: true
+  # Manual | FullyAutomated
+  automationLevel: Manual
+  # Conservative | Default | Aggressive
+  migrationThreshold: Default
+  cycleInterval: 60s
+  cooldown:
+    base: 15m
+    max: 6h
+    historyWindow: 48h
+  recommendationTTL: 10m
+  scoreAnnotation: true
+  softTainter: false
+  paused: false

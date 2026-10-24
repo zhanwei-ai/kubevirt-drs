@@ -1,0 +1,50 @@
+{
+  "title": "KubeVirt DRS Score",
+  "uid": "kubevirt-drs",
+  "tags": ["kubevirt", "drs"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {"name": "datasource", "type": "datasource", "query": "prometheus", "label": "Prometheus", "current": {}},
+      {"name": "namespace", "type": "query", "datasource": {"uid": "${datasource}"}, "query": "label_values(vmi:drs_score, namespace)", "refresh": 2, "includeAll": true, "multi": true, "current": {"text": "All", "value": "$__all"}}
+    ]
+  },
+  "panels": [
+    {"id": 1, "type": "stat", "title": "Cluster DRS score", "gridPos": {"x": 0, "y": 0, "w": 6, "h": 5},
+     "datasource": {"uid": "${datasource}"},
+     "targets": [{"expr": "cluster:drs_score:avg", "refId": "A"}],
+     "fieldConfig": {"defaults": {"min": 0, "max": 100, "unit": "none", "decimals": 0,
+       "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 50}, {"color": "green", "value": 80}]}}},
+     "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}}},
+    {"id": 2, "type": "timeseries", "title": "Node DRS score (vCPU-weighted)", "gridPos": {"x": 6, "y": 0, "w": 18, "h": 8},
+     "datasource": {"uid": "${datasource}"},
+     "targets": [{"expr": "node:drs_score:avg", "legendFormat": "{{node}}", "refId": "A"}],
+     "fieldConfig": {"defaults": {"min": 0, "max": 100, "custom": {"lineWidth": 2, "fillOpacity": 5}}}},
+    {"id": 3, "type": "table", "title": "VMs by score (lowest first)", "gridPos": {"x": 0, "y": 5, "w": 6, "h": 11},
+     "datasource": {"uid": "${datasource}"},
+     "targets": [{"expr": "sort(vmi:drs_score{namespace=~\"$namespace\"})", "format": "table", "instant": true, "refId": "A"}],
+     "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true}, "renameByName": {"Value": "score", "name": "vm"}}}],
+     "fieldConfig": {"defaults": {"decimals": 0}, "overrides": [{"matcher": {"id": "byName", "options": "score"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-background"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 50}, {"color": "green", "value": 80}]}}]}]}},
+    {"id": 4, "type": "timeseries", "title": "VM DRS score", "gridPos": {"x": 6, "y": 8, "w": 18, "h": 8},
+     "datasource": {"uid": "${datasource}"},
+     "targets": [{"expr": "vmi:drs_score{namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{name}} @ {{node}}", "refId": "A"}],
+     "fieldConfig": {"defaults": {"min": 0, "max": 100, "custom": {"lineWidth": 1}}}},
+    {"id": 5, "type": "timeseries", "title": "CPU ready ratio per vCPU (host contention)", "gridPos": {"x": 0, "y": 16, "w": 8, "h": 8},
+     "datasource": {"uid": "${datasource}"},
+     "targets": [{"expr": "vmi:drs_cpu_ready:ratio{namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{name}}", "refId": "A"}],
+     "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "custom": {"lineWidth": 1, "thresholdsStyle": {"mode": "line"}},
+       "thresholds": {"mode": "absolute", "steps": [{"color": "transparent", "value": null}, {"color": "orange", "value": 0.05}, {"color": "red", "value": 0.25}]}}}},
+    {"id": 6, "type": "timeseries", "title": "Memory pressure (reclaim + swap + major faults)", "gridPos": {"x": 8, "y": 16, "w": 8, "h": 8},
+     "datasource": {"uid": "${datasource}"},
+     "targets": [{"expr": "vmi:drs_mem_pressure:ratio{namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{name}}", "refId": "A"}],
+     "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "custom": {"lineWidth": 1}}}},
+    {"id": 7, "type": "timeseries", "title": "Packet drop ratio", "gridPos": {"x": 16, "y": 16, "w": 8, "h": 8},
+     "datasource": {"uid": "${datasource}"},
+     "targets": [{"expr": "vmi:drs_net_drop:ratio{namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}/{{name}}", "refId": "A"}],
+     "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "custom": {"lineWidth": 1}}}}
+  ]
+}

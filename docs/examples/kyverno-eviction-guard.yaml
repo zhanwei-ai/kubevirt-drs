@@ -1,0 +1,36 @@
+# Hard guarantee that a descheduler never evicts a VM pod, for clusters that run Kyverno.
+# Why Kyverno and not a ValidatingAdmissionPolicy: on pods/eviction the admission object is the Eviction,
+# and CEL cannot see the target pod's labels; Kyverno can fetch the pod with an apiCall context.
+# Adjust the ServiceAccount to your descheduler install. TEMPLATE: verify against your Kyverno version.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: kubevirt-drs-eviction-guard
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: deny-descheduler-eviction-of-virt-launcher
+      match:
+        any:
+          - resources:
+              kinds: ["Pod/eviction"]
+            subjects:
+              - kind: ServiceAccount
+                name: descheduler
+                namespace: kube-system
+      context:
+        - name: targetPodKubevirtLabel
+          apiCall:
+            urlPath: "/api/v1/namespaces/{{ request.namespace }}/pods/{{ request.name }}"
+            jmesPath: "metadata.labels.\"kubevirt.io\" || ''"
+      validate:
+        message: >-
+          kubevirt-drs owns VM balancing: the descheduler must not evict virt-launcher pods. Exclude
+          kubevirt.io=virt-launcher in its DefaultEvictor labelSelector.
+        deny:
+          conditions:
+            all:
+              - key: "{{ targetPodKubevirtLabel }}"
+                operator: Equals
+                value: "virt-launcher"

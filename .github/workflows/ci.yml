@@ -1,0 +1,96 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+env:
+  KUBECONFORM_VERSION: v0.8.0
+  GITLEAKS_VERSION: v8.30.1
+  PROMETHEUS_VERSION: v3.15.1
+  HELM_VERSION: v4.3.1
+  YQ_VERSION: v4.54.1
+jobs:
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Every commit carries a Signed-off-by line
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          else
+            range="${{ github.event.before }}..${{ github.sha }}"
+          fi
+          commits=$(git rev-list --no-merges "$range" 2>/dev/null || git rev-list --no-merges -1 HEAD)
+          missing=0
+          for c in $commits; do
+            if ! git log -1 --format=%B "$c" | grep -Eq '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::commit $c has no Signed-off-by line (git commit -s)"; missing=1
+            fi
+          done
+          exit $missing
+
+  go:
+    name: Go build / test / lint / generated files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Generated files are up to date
+        run: |
+          make generate manifests GO=go
+          git diff --exit-code -- api config charts/kubevirt-drs/crds charts/kubevirt-drs/templates/controller/clusterrole.yaml
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./... -coverprofile=coverage.out
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+
+  chart:
+    name: Helm chart / rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: helm lint + template (controller on and off)
+        run: |
+          helm lint charts/kubevirt-drs
+          api="--kube-version 1.36.0 --api-versions monitoring.coreos.com/v1/PrometheusRule --api-versions monitoring.coreos.com/v1/ServiceMonitor --api-versions kubevirt.io/v1/VirtualMachineInstance"
+          helm template drs charts/kubevirt-drs $api > /tmp/score-only.yaml
+          helm template drs charts/kubevirt-drs $api --set controller.enabled=true --set controller.serviceMonitor.enabled=true --set prometheusRule.deschedulerBridge.enabled=true > /tmp/full.yaml
+          helm template drs charts/kubevirt-drs --kube-version 1.36.0 2>&1 | grep -q 'PrometheusRule (monitoring.coreos.com/v1) is not served' \
+            && echo "render refuses without the Prometheus Operator CRD: ok"
+      - name: kubeconform
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -strict -ignore-missing-schemas -summary -kubernetes-version 1.36.0 /tmp/full.yaml
+      - name: Exported rule file matches the chart, and promtool accepts it
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" && sudo chmod +x /usr/local/bin/yq
+          helm template drs charts/kubevirt-drs --kube-version 1.36.0 --api-versions monitoring.coreos.com/v1/PrometheusRule --show-only templates/prometheusrule.yaml \
+            | yq '.spec' > /tmp/drs-rules.yaml
+          diff -u docs/examples/drs-rules.yaml /tmp/drs-rules.yaml || { echo "::error::docs/examples/drs-rules.yaml is stale: run make rules-export"; exit 1; }
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION#v}.linux-amd64.tar.gz" | tar -xz -C /tmp
+          "/tmp/prometheus-${PROMETHEUS_VERSION#v}.linux-amd64/promtool" check rules docs/examples/drs-rules.yaml
+
+  gitleaks:
+    name: Secrets scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: |
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz" | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks git --redact --no-banner --verbose .

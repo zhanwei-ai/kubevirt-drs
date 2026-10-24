@@ -1,0 +1,10 @@
+bin/
+dist/
+*.out
+coverage.*
+.idea/
+.vscode/
+*.swp
+charts/kubevirt-drs/charts/
+charts/*.tgz
+hack/lab/*.kubeconfig

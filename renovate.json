@@ -1,0 +1,8 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits"],
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {"matchManagers": ["gomod"], "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/controller-runtime"], "groupName": "kubernetes libraries"}
+  ]
+}

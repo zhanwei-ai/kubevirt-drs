@@ -1,0 +1,109 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubevirt-drs-manager
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - drs.zhanwei.ai
+  resources:
+  - drspolicies
+  - drsrecommendations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - drs.zhanwei.ai
+  resources:
+  - drspolicies/status
+  - drsrecommendations/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - k8s.cni.cncf.io
+  resources:
+  - network-attachment-definitions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - kubevirts
+  - virtualmachines
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - virtualmachineinstancemigrations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - virtualmachineinstances
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - migrations.kubevirt.io
+  resources:
+  - migrationpolicies
+  verbs:
+  - get
+  - list
+  - watch

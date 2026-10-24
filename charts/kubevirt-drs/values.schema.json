@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "kubevirt-drs values",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      },
+      "required": ["repository"]
+    },
+    "prometheus": {
+      "type": "object",
+      "properties": {"url": {"type": "string", "pattern": "^(https?://.+)?$"}}
+    },
+    "prometheusRule": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "additionalLabels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "interval": {"type": "string", "pattern": "^[0-9]+(ms|s|m|h)$"},
+        "rateWindow": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"},
+        "cpuReadyWeight": {"type": "number", "minimum": 1, "maximum": 100},
+        "swapBytesPerSecondFull": {"type": "number", "exclusiveMinimum": 0},
+        "pgmajfaultsPerSecondFull": {"type": "number", "exclusiveMinimum": 0},
+        "deschedulerBridge": {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+      }
+    },
+    "dashboard": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "namespace": {"type": "string"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "controller": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "replicas": {"type": "integer", "minimum": 0},
+        "leaderElection": {"type": "boolean"},
+        "logLevel": {"type": "string", "enum": ["debug", "info", "error"]},
+        "resources": {"type": "object"},
+        "nodeSelector": {"type": "object"},
+        "tolerations": {"type": "array"},
+        "affinity": {"type": "object"},
+        "podAnnotations": {"type": "object"},
+        "priorityClassName": {"type": "string"},
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "additionalLabels": {"type": "object"},
+            "interval": {"type": "string"}
+          }
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "create": {"type": "boolean"},
+        "automationLevel": {"type": "string", "enum": ["Manual", "FullyAutomated"]},
+        "migrationThreshold": {"type": "string", "enum": ["Conservative", "Default", "Aggressive"]},
+        "cycleInterval": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"},
+        "cooldown": {
+          "type": "object",
+          "properties": {
+            "base": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"},
+            "max": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"},
+            "historyWindow": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"}
+          }
+        },
+        "recommendationTTL": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"},
+        "scoreAnnotation": {"type": "boolean"},
+        "softTainter": {"type": "boolean"},
+        "paused": {"type": "boolean"}
+      }
+    }
+  }
+}
