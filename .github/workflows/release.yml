@@ -1,0 +1,149 @@
+# Tag-driven release: push a tag vX.Y.Z (or vX.Y.Z-rc.N for a pre-release) whose X.Y.Z matches Chart.yaml.
+# Publishes the image and the chart to GHCR, signs both with cosign (keyless, GitHub OIDC), attests a
+# CycloneDX SBOM of the image, creates the GitHub release, then pulls everything back and verifies it.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  CHART_OCI: oci://ghcr.io/${{ github.repository_owner }}/charts
+  CHART_REF: ghcr.io/${{ github.repository_owner }}/charts/kubevirt-drs
+  HELM_VERSION: v4.3.1
+  SYFT_VERSION: v1.55.0
+  YQ_VERSION: v4.54.1
+jobs:
+  release:
+    name: Build, sign, publish
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      image_digest: ${{ steps.build.outputs.digest }}
+      chart_digest: ${{ steps.chart.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Version from the tag; Chart.yaml must agree
+        id: ver
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" && sudo chmod +x /usr/local/bin/yq
+          tag="${GITHUB_REF_NAME}"; ver="${tag#v}"; base="${ver%%-*}"
+          chart="$(yq '.version' charts/kubevirt-drs/Chart.yaml)"; app="$(yq '.appVersion' charts/kubevirt-drs/Chart.yaml)"
+          if [ "$chart" != "$base" ] || [ "$app" != "$base" ]; then
+            echo "::error::tag $tag, but Chart.yaml has version=$chart appVersion=$app (expected $base). Bump Chart.yaml first."; exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          case "$ver" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;; *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;; esac
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          build-args: VERSION=v${{ steps.ver.outputs.version }}
+          tags: ${{ env.IMAGE }}:v${{ steps.ver.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=v${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.description=VMware DRS-style VM scoring and live-migration balancing for KubeVirt
+      - uses: sigstore/cosign-installer@v4
+      - name: Sign the image (keyless, GitHub OIDC)
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - name: SBOM of the image (CycloneDX) + attestation
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin "${SYFT_VERSION}"
+          mkdir -p dist
+          syft "${IMAGE}@${{ steps.build.outputs.digest }}" -o "cyclonedx-json=dist/kubevirt-drs-${{ steps.ver.outputs.version }}.image.cdx.json"
+          cosign attest --yes --type cyclonedx --predicate "dist/kubevirt-drs-${{ steps.ver.outputs.version }}.image.cdx.json" "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Package, push and sign the chart
+        id: chart
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          helm package charts/kubevirt-drs --version "$v" --app-version "$v" -d dist
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "dist/kubevirt-drs-$v.tgz" "${CHART_OCI}" 2>&1 | tee /tmp/helm-push.log
+          digest="$(grep -oE 'sha256:[a-f0-9]{64}' /tmp/helm-push.log | head -1)"
+          [ -n "$digest" ] || { echo "::error::no digest in helm push output"; exit 1; }
+          cosign sign --yes "${CHART_REF}@${digest}"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Release notes
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          {
+            echo "## kubevirt-drs v$v"
+            echo
+            echo '```bash'
+            echo "helm install kubevirt-drs ${CHART_OCI}/kubevirt-drs --version $v -n kubevirt-drs --create-namespace"
+            echo '```'
+            echo
+            echo "| artifact | reference | digest |"
+            echo "| --- | --- | --- |"
+            echo "| image | \`${IMAGE}:v$v\` | \`${{ steps.build.outputs.digest }}\` |"
+            echo "| chart | \`${CHART_REF}:$v\` | \`${{ steps.chart.outputs.digest }}\` |"
+            echo
+            echo "Both are signed with cosign (keyless, GitHub OIDC); the image carries a CycloneDX SBOM attestation (also attached below)."
+            echo '```bash'
+            echo "cosign verify ${IMAGE}@${{ steps.build.outputs.digest }} \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+            echo
+            echo "Changes: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${GITHUB_REF_NAME}/CHANGELOG.md)."
+          } > /tmp/notes.md
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          args=(--title "${GITHUB_REF_NAME}" --notes-file /tmp/notes.md --verify-tag)
+          [ "${{ steps.ver.outputs.prerelease }}" = true ] && args+=(--prerelease)
+          gh release create "${GITHUB_REF_NAME}" "${args[@]}" dist/*.tgz dist/*.cdx.json
+
+  verify:
+    name: Pull back and verify
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: sigstore/cosign-installer@v4
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: helm pull from GHCR and render
+        run: |
+          v="${{ needs.release.outputs.version }}"
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm pull "${CHART_OCI}/kubevirt-drs" --version "$v"
+          n="$(helm template drs "kubevirt-drs-$v.tgz" --kube-version 1.36.0 --api-versions monitoring.coreos.com/v1/PrometheusRule | grep -c '^kind:')"
+          echo "chart $v renders $n resources"
+      - name: cosign verify image, SBOM attestation and chart
+        run: |
+          id="^https://github.com/${{ github.repository }}/"
+          iss=https://token.actions.githubusercontent.com
+          cosign verify "${IMAGE}@${{ needs.release.outputs.image_digest }}" --certificate-identity-regexp "$id" --certificate-oidc-issuer "$iss" > /dev/null && echo "image signature: ok"
+          cosign verify-attestation --type cyclonedx "${IMAGE}@${{ needs.release.outputs.image_digest }}" --certificate-identity-regexp "$id" --certificate-oidc-issuer "$iss" > /dev/null && echo "sbom attestation: ok"
+          cosign verify "${CHART_REF}@${{ needs.release.outputs.chart_digest }}" --certificate-identity-regexp "$id" --certificate-oidc-issuer "$iss" > /dev/null && echo "chart signature: ok"
