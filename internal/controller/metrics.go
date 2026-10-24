@@ -31,8 +31,14 @@ var (
 	metricCandidates = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "kubevirt_drs_vms_evaluated", Help: "Running VMIs the planner evaluated in the last cycle.",
 	})
+	metricStalled = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "kubevirt_drs_stalled_migrations_total", Help: "Brain-created migrations the watchdog deleted because they never found a node.",
+	})
+	metricHotNodes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "kubevirt_drs_hot_nodes", Help: "Nodes carrying the drs.zhanwei.ai/hot soft taint.",
+	})
 )
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(metricReady, metricCycleDuration, metricCycles, metricRecommendations, metricMigrations, metricClusterScore, metricInFlight, metricCandidates)
+	ctrlmetrics.Registry.MustRegister(metricReady, metricCycleDuration, metricCycles, metricRecommendations, metricMigrations, metricClusterScore, metricInFlight, metricCandidates, metricStalled, metricHotNodes)
 }

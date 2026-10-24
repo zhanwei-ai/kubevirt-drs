@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	kubevirtv1 "kubevirt.io/api/core/v1"
@@ -196,19 +197,31 @@ func (e *Executor) ExpireStale(ctx context.Context, why func(rec *drsv1alpha1.DR
 	return n, nil
 }
 
-// Pending returns the VMIs that have a Pending recommendation, and how many there are.
-func (e *Executor) Pending(ctx context.Context) (map[planner.Key]bool, int, error) {
+// Pending returns the Pending recommendations (phase Pending or not yet set).
+func (e *Executor) Pending(ctx context.Context) ([]drsv1alpha1.DRSRecommendation, error) {
 	var list drsv1alpha1.DRSRecommendationList
 	if err := e.Client.List(ctx, &list); err != nil {
-		return nil, 0, fmt.Errorf("list recommendations: %w", err)
+		return nil, fmt.Errorf("list recommendations: %w", err)
 	}
-	out := map[planner.Key]bool{}
+	var out []drsv1alpha1.DRSRecommendation
 	for i := range list.Items {
 		if list.Items[i].Status.Phase == drsv1alpha1.PhasePending || list.Items[i].Status.Phase == "" {
-			out[planner.Key{Namespace: list.Items[i].Namespace, Name: list.Items[i].Spec.VMI}] = true
+			out = append(out, list.Items[i])
 		}
 	}
-	return out, len(out), nil
+	return out, nil
+}
+
+// Fail marks a recommendation Failed with a message (used by the watchdog).
+func (e *Executor) Fail(ctx context.Context, rec *drsv1alpha1.DRSRecommendation, msg string) error {
+	return e.fail(ctx, rec, msg)
+}
+
+// Event emits a Normal or Warning event about an object when a recorder is configured.
+func (e *Executor) Event(obj runtime.Object, eventType, reason, action, note string) {
+	if e.Recorder != nil {
+		e.Recorder.Eventf(obj, nil, eventType, reason, action, "%s", note)
+	}
 }
 
 // SyncScoreAnnotation writes drs.zhanwei.ai/score on the VMI when the score crosses a 5-point bucket.

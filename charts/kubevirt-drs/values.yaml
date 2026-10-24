@@ -88,5 +88,12 @@ policy:
     historyWindow: 48h
   recommendationTTL: 10m
   scoreAnnotation: true
+  # -- PreferNoSchedule taint drs.zhanwei.ai/hot on hot nodes (steers new VMs away; never evicts).
   softTainter: false
   paused: false
+  watchdog:
+    # -- A brain-created migration still Pending/Scheduling after this is deleted and its recommendation
+    # marked Failed (the pinned target did not fit after all).
+    gracePeriod: 2m
+    # -- The (source, target) pair is not proposed again for this long.
+    blacklistFor: 1h

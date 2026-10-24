@@ -58,8 +58,22 @@ func ReadLimits(ctx context.Context, c client.Reader) (Limits, error) {
 	return l, nil
 }
 
+// Move is one VirtualMachineInstanceMigration reduced to what the planner and the watchdog need.
+type Move struct {
+	Name           string
+	Recommendation string // label drs.zhanwei.ai/recommendation, "" for migrations the brain did not create
+	VMI            planner.Key
+	Source, Target string
+	Phase          kubevirtv1.VirtualMachineInstanceMigrationPhase
+	InFlight       bool
+	Created        time.Time
+	End            time.Time // completed migrations only
+}
+
 // Migrations summarises the VirtualMachineInstanceMigrations of the cluster for one cycle.
 type Migrations struct {
+	// Moves: every migration (in flight or finished) with its source, target and timing.
+	Moves []Move
 	// InFlight: every migration not yet Succeeded or Failed, whoever created it.
 	InFlight int
 	// OutboundBySource: in-flight migrations per source node.
@@ -84,32 +98,41 @@ func ListMigrations(ctx context.Context, c client.Reader, vmiNode map[planner.Ke
 	for i := range list.Items {
 		mig := &list.Items[i]
 		key := planner.Key{Namespace: mig.Namespace, Name: mig.Spec.VMIName}
+		mv := Move{Name: mig.Name, Recommendation: mig.Labels[drsv1alpha1.LabelRecommendation], VMI: key,
+			Phase: mig.Status.Phase, Created: mig.CreationTimestamp.Time, Target: mig.Spec.AddedNodeSelector[corev1.LabelHostname]}
+		if ms := mig.Status.MigrationState; ms != nil {
+			mv.Source = ms.SourceNode
+			if mv.Target == "" {
+				mv.Target = ms.TargetNode
+			}
+			if ms.EndTimestamp != nil {
+				mv.End = ms.EndTimestamp.Time
+			}
+		}
+		if mv.Source == "" {
+			mv.Source = vmiNode[key]
+		}
 		switch mig.Status.Phase {
 		case kubevirtv1.MigrationSucceeded:
-			if ms := mig.Status.MigrationState; ms != nil && ms.EndTimestamp != nil {
-				m.CompletedByVMI[key] = append(m.CompletedByVMI[key], ms.EndTimestamp.Time)
+			if !mv.End.IsZero() {
+				m.CompletedByVMI[key] = append(m.CompletedByVMI[key], mv.End)
 			}
 		case kubevirtv1.MigrationFailed:
 		default:
 			if mig.DeletionTimestamp != nil {
 				continue
 			}
+			mv.InFlight = true
 			m.InFlight++
 			m.InFlightByVMI[key] = true
-			src := ""
-			if ms := mig.Status.MigrationState; ms != nil {
-				src = ms.SourceNode
+			if mv.Source != "" {
+				m.OutboundBySource[mv.Source]++
 			}
-			if src == "" {
-				src = vmiNode[key]
-			}
-			if src != "" {
-				m.OutboundBySource[src]++
-			}
-			if strings.HasPrefix(mig.Name, EvacuationPrefix) && src != "" && !cordoned[src] {
+			if strings.HasPrefix(mig.Name, EvacuationPrefix) && mv.Source != "" && !cordoned[mv.Source] {
 				m.ExternalEvacuations++
 			}
 		}
+		m.Moves = append(m.Moves, mv)
 	}
 	return m, nil
 }
@@ -338,4 +361,46 @@ func Duration(d *metav1.Duration, def time.Duration) time.Duration {
 		return def
 	}
 	return d.Duration
+}
+
+// Reservation is a proposed or running move the metrics do not show yet.
+type Reservation struct {
+	VMI            planner.Key
+	Source, Target string
+	// Pending: a recommendation nobody has approved yet. It reserves the target (so the next candidate is
+	// not sent to the same node) but does not settle the source: nothing has moved, the other VMs there
+	// may still be recommended (Manual mode lists every beneficial move, like VMware).
+	Pending bool
+	// Done is when a completed move finished (zero for pending / in flight).
+	Done time.Time
+}
+
+// ApplyReservations folds proposed and recent moves into the planner nodes: the target gets the VM's demand
+// reserved; the source of an in-flight or just-completed move settles for `window` (in-flight: from now).
+// demand gives a VM's cores.
+func ApplyReservations(nodes []planner.Node, res []Reservation, demand func(planner.Key) float64, now time.Time, window time.Duration) {
+	byName := make(map[string]*planner.Node, len(nodes))
+	for i := range nodes {
+		byName[nodes[i].Name] = &nodes[i]
+	}
+	for _, r := range res {
+		if !r.Done.IsZero() && now.Sub(r.Done) > window {
+			continue
+		}
+		if t := byName[r.Target]; t != nil {
+			t.ReservedCPU += demand(r.VMI)
+		}
+		if r.Pending {
+			continue
+		}
+		if s := byName[r.Source]; s != nil && window > 0 {
+			until := now.Add(window)
+			if !r.Done.IsZero() {
+				until = r.Done.Add(window)
+			}
+			if until.After(s.SettlingUntil) {
+				s.SettlingUntil = until
+			}
+		}
+	}
 }

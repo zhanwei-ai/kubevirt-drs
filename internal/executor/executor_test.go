@@ -116,9 +116,9 @@ func TestRecommendThenApplyCreatesPinnedMigration(t *testing.T) {
 	if rec.Status.Phase != drsv1alpha1.PhasePending || rec.Spec.Approved || !rec.Spec.ExpiresAt.Time.Equal(now.Add(10*time.Minute)) {
 		t.Fatalf("unexpected recommendation: %+v", rec)
 	}
-	pending, n, err := ex.Pending(ctx)
-	if err != nil || n != 1 || !pending[planner.Key{Namespace: "default", Name: "vm1"}] {
-		t.Fatalf("pending = %v %d %v", pending, n, err)
+	pending, err := ex.Pending(ctx)
+	if err != nil || len(pending) != 1 || pending[0].Spec.VMI != "vm1" {
+		t.Fatalf("pending = %v %v", pending, err)
 	}
 
 	// a human approves

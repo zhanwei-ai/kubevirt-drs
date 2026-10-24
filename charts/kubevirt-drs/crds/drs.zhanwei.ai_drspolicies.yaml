@@ -271,13 +271,37 @@ spec:
               softTainter:
                 default: false
                 description: |-
-                  SoftTainter: put a PreferNoSchedule taint on nodes the brain considers hot so kube-scheduler also
-                  avoids them for new VMs, and as the fallback when a pinned target turns out not to fit.
+                  SoftTainter: put the PreferNoSchedule taint drs.zhanwei.ai/hot on nodes whose VMs score below the
+                  threshold floor or whose VM demand exceeds the target headroom, so kube-scheduler also steers new VMs
+                  (and the fallback placement of an unpinned migration) away from them. Removed when the node recovers.
                 type: boolean
+              watchdog:
+                description: |-
+                  WatchdogSpec bounds the one failure mode of pinning a target: KubeVirt's addedNodeSelector can only narrow
+                  the VM's own constraints, so a target the planner mis-judged leaves the migration in Scheduling forever.
+                properties:
+                  blacklistFor:
+                    default: 1h
+                    description: BlacklistFor is how long that pair is not proposed
+                      again.
+                    type: string
+                  gracePeriod:
+                    default: 2m
+                    description: |-
+                      GracePeriod a brain-created migration may stay in Pending/Scheduling before it is deleted, its
+                      recommendation marked Failed and the (source, target) pair blacklisted.
+                    type: string
+                type: object
             type: object
           status:
             description: DRSPolicyStatus reports what the brain saw in its last cycle.
             properties:
+              blacklistedPairs:
+                description: 'BlacklistedPairs: "source->target" pairs the watchdog
+                  has banned, with their expiry.'
+                items:
+                  type: string
+                type: array
               clusterScore:
                 description: ClusterScore is the vCPU-weighted average score of all
                   running VMs, 0..100, as of the last cycle.
@@ -344,6 +368,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              hotNodes:
+                description: HotNodes carry the soft taint right now (empty when softTainter
+                  is off).
+                items:
+                  type: string
+                type: array
               inFlightMigrations:
                 format: int32
                 type: integer

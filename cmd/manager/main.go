@@ -103,7 +103,10 @@ func main() {
 		log.Error(err, "unable to add the cycle runner")
 		os.Exit(1)
 	}
-	if err := (&controller.RecommendationReconciler{Client: mgr.GetClient(), Exec: exec, Log: ctrl.Log.WithName("recommendation")}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.RecommendationReconciler{
+		Client: mgr.GetClient(), Exec: exec, Log: ctrl.Log.WithName("recommendation"),
+		Blacklist: cycle.Blacklist, BlacklistFor: cycle.BlacklistFor,
+	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to set up the recommendation reconciler")
 		os.Exit(1)
 	}

@@ -106,6 +106,20 @@ type ScoringSpec struct {
 	SmoothingWindow *metav1.Duration `json:"smoothingWindow,omitempty"`
 }
 
+// WatchdogSpec bounds the one failure mode of pinning a target: KubeVirt's addedNodeSelector can only narrow
+// the VM's own constraints, so a target the planner mis-judged leaves the migration in Scheduling forever.
+type WatchdogSpec struct {
+	// GracePeriod a brain-created migration may stay in Pending/Scheduling before it is deleted, its
+	// recommendation marked Failed and the (source, target) pair blacklisted.
+	// +kubebuilder:default="2m"
+	// +optional
+	GracePeriod *metav1.Duration `json:"gracePeriod,omitempty"`
+	// BlacklistFor is how long that pair is not proposed again.
+	// +kubebuilder:default="1h"
+	// +optional
+	BlacklistFor *metav1.Duration `json:"blacklistFor,omitempty"`
+}
+
 // DRSPolicySpec configures the one DRS brain of a cluster.
 type DRSPolicySpec struct {
 	// +kubebuilder:default=Manual
@@ -126,6 +140,8 @@ type DRSPolicySpec struct {
 	Selector SelectorSpec `json:"selector,omitempty"`
 	// +optional
 	Scoring ScoringSpec `json:"scoring,omitempty"`
+	// +optional
+	Watchdog WatchdogSpec `json:"watchdog,omitempty"`
 	// RecommendationTTL: an unapproved recommendation older than this is marked Expired and the VM is
 	// re-evaluated next cycle (VMware regenerates its recommendations every round too).
 	// +kubebuilder:default="10m"
@@ -136,8 +152,9 @@ type DRSPolicySpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	ScoreAnnotation *bool `json:"scoreAnnotation,omitempty"`
-	// SoftTainter: put a PreferNoSchedule taint on nodes the brain considers hot so kube-scheduler also
-	// avoids them for new VMs, and as the fallback when a pinned target turns out not to fit.
+	// SoftTainter: put the PreferNoSchedule taint drs.zhanwei.ai/hot on nodes whose VMs score below the
+	// threshold floor or whose VM demand exceeds the target headroom, so kube-scheduler also steers new VMs
+	// (and the fallback placement of an unpinned migration) away from them. Removed when the node recovers.
 	// +kubebuilder:default=false
 	// +optional
 	SoftTainter *bool `json:"softTainter,omitempty"`
@@ -166,6 +183,12 @@ type DRSPolicyStatus struct {
 	PendingRecommendations int32 `json:"pendingRecommendations,omitempty"`
 	// +optional
 	InFlightMigrations int32 `json:"inFlightMigrations,omitempty"`
+	// HotNodes carry the soft taint right now (empty when softTainter is off).
+	// +optional
+	HotNodes []string `json:"hotNodes,omitempty"`
+	// BlacklistedPairs: "source->target" pairs the watchdog has banned, with their expiry.
+	// +optional
+	BlacklistedPairs []string `json:"blacklistedPairs,omitempty"`
 }
 
 // DRSPolicy is the cluster-wide configuration of the DRS brain. It is a singleton named "default".
