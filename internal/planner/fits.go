@@ -16,7 +16,44 @@ type FitResult struct {
 
 func fit(reason string) FitResult { return FitResult{OK: reason == "", Reason: reason} }
 
-// Fits evaluates the scheduling predicates the migration's target pod will face on `node`, using the source
+// lifecycleTaints are set by Kubernetes itself to describe a node's state (cordoned, pressure, not ready).
+// They are not rules a VM can violate: a cordon is an admin decision (and a drain already evacuates), the
+// others are node_ha / kubelet territory. They still exclude a node as a migration TARGET.
+var lifecycleTaints = map[string]bool{
+	corev1.TaintNodeUnschedulable:      true,
+	corev1.TaintNodeNotReady:           true,
+	corev1.TaintNodeUnreachable:        true,
+	corev1.TaintNodeMemoryPressure:     true,
+	corev1.TaintNodeDiskPressure:       true,
+	corev1.TaintNodePIDPressure:        true,
+	corev1.TaintNodeNetworkUnavailable: true,
+}
+
+// ViolatesRules reports whether the VM breaks a placement rule on the node it runs on: an untolerated
+// NoSchedule / NoExecute taint that an admin put there, or a nodeSelector / required node affinity that no
+// longer matches (labels changed). A true result is VMware's "mandatory" (priority 1) recommendation.
+// Cordon, NotReady and pressure taints are deliberately NOT rules (see lifecycleTaints).
+func ViolatesRules(vm *VM, node *Node) FitResult {
+	if node == nil || node.Obj == nil || vm.Pod == nil {
+		return fit("")
+	}
+	pod := vm.Pod
+	if taint, untolerated := schedhelper.FindMatchingUntoleratedTaint(klog.Background(), node.Obj.Spec.Taints, pod.Spec.Tolerations, func(t *corev1.Taint) bool {
+		return (t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute) && !lifecycleTaints[t.Key]
+	}, false); untolerated {
+		return fit("taint " + taint.Key + "=" + taint.Value + ":" + string(taint.Effect) + " not tolerated")
+	}
+	match, err := nodeaffinity.GetRequiredNodeAffinity(pod).Match(node.Obj)
+	if err != nil {
+		return fit("node affinity: " + err.Error())
+	}
+	if !match {
+		return fit("nodeSelector / required node affinity not satisfied")
+	}
+	return fit("")
+}
+
+// Fits evaluates the scheduling predicates the migration's TARGET pod will face on `node`, using the source
 // virt-launcher pod as the template (KubeVirt builds the target pod from the same VMI spec, so nodeSelector,
 // affinity, tolerations and requests are identical; addedNodeSelector only narrows them). Checked:
 //

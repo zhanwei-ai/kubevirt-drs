@@ -69,6 +69,8 @@ type Migrations struct {
 	ExternalEvacuations int
 	// CompletedByVMI: end timestamps of succeeded migrations per VMI (for the cooldown backoff).
 	CompletedByVMI map[planner.Key][]time.Time
+	// InFlightByVMI: VMIs with a migration not yet finished.
+	InFlightByVMI map[planner.Key]bool
 }
 
 // ListMigrations reads all VMIMs. vmiNode maps a VMI to its current node (fallback for the source node of
@@ -78,7 +80,7 @@ func ListMigrations(ctx context.Context, c client.Reader, vmiNode map[planner.Ke
 	if err := c.List(ctx, &list); err != nil {
 		return nil, fmt.Errorf("list migrations: %w", err)
 	}
-	m := &Migrations{OutboundBySource: map[string]int{}, CompletedByVMI: map[planner.Key][]time.Time{}}
+	m := &Migrations{OutboundBySource: map[string]int{}, CompletedByVMI: map[planner.Key][]time.Time{}, InFlightByVMI: map[planner.Key]bool{}}
 	for i := range list.Items {
 		mig := &list.Items[i]
 		key := planner.Key{Namespace: mig.Namespace, Name: mig.Spec.VMIName}
@@ -93,6 +95,7 @@ func ListMigrations(ctx context.Context, c client.Reader, vmiNode map[planner.Ke
 				continue
 			}
 			m.InFlight++
+			m.InFlightByVMI[key] = true
 			src := ""
 			if ms := mig.Status.MigrationState; ms != nil {
 				src = ms.SourceNode
@@ -178,7 +181,7 @@ func BuildVMs(ctx context.Context, c client.Reader, vmis []kubevirtv1.VirtualMac
 			HasPendingRecommendation: opt.PendingRecs[key],
 		}
 		if metrics != nil {
-			if mm := metrics.VM[key]; mm != nil {
+			if mm := metrics.For(key, vmi.Status.NodeName); mm != nil {
 				vm.Score, vm.HasScore = mm.Score, mm.HasScore
 				vm.CPUReady, vm.MemReclaim, vm.MemPressure, vm.NetDrop = mm.CPUReady, mm.MemReclaim, mm.MemPressure, mm.NetDrop
 				vm.CPUDemandCores = mm.CPUDemand
@@ -194,6 +197,10 @@ func BuildVMs(ctx context.Context, c client.Reader, vmis []kubevirtv1.VirtualMac
 			}
 		}
 		if migs != nil {
+			vm.MigrationInFlight = migs.InFlightByVMI[key]
+			if ms := vmi.Status.MigrationState; ms != nil && !ms.Completed && !ms.Failed {
+				vm.MigrationInFlight = true
+			}
 			for _, end := range migs.CompletedByVMI[key] {
 				if opt.CooldownWindow <= 0 || opt.Now.Sub(end) <= opt.CooldownWindow {
 					vm.MigrationsInWindow++

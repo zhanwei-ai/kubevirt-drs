@@ -180,6 +180,25 @@ func TestRuleViolationIsMandatory(t *testing.T) {
 	}
 }
 
+// A cordon (spec.unschedulable + the node.kubernetes.io/unschedulable taint) is not a rule violation: the
+// healthy VM stays, no priority-1 move. Found on the lab cluster on 2026-10-24: during a cordon/uncordon
+// squeeze the brain recommended moving an unrelated healthy VM off the cordoned node.
+func TestCordonIsNotARuleViolation(t *testing.T) {
+	cordon := corev1.Taint{Key: corev1.TaintNodeUnschedulable, Effect: corev1.TaintEffectNoSchedule}
+	nodes := []Node{node("A", 16, 2, 99, cordon), node("B", 16, 1, 99)}
+	nodes[0].Ready = false // cordoned
+	nodes[0].Obj.Spec.Unschedulable = true
+	ds, _ := Plan([]VM{vm("vm1", "A", 2, 1.0, 99, 0.0)}, nodes, policy())
+	if len(ds) != 0 {
+		t.Fatalf("cordon must not produce a move, got %+v", ds)
+	}
+	// ... but a suffering VM on a cordoned node may still be load-balanced away.
+	ds, _ = Plan([]VM{vm("vm2", "A", 8, 7.6, 28, 0.18)}, nodes, policy())
+	if len(ds) != 1 || ds[0].Priority != 2 {
+		t.Fatalf("want a priority-2 move for the suffering VM, got %+v", ds)
+	}
+}
+
 func TestNoPingPongOntoAWorseNode(t *testing.T) {
 	// B is the only fitting target but already less happy than A.
 	nodes := []Node{node("A", 16, 14, 45), node("B", 16, 2, 30)}
@@ -234,5 +253,41 @@ func TestCostSeconds(t *testing.T) {
 	}
 	if got := CostSeconds(&v, Policy{}); got != 32 {
 		t.Fatalf("default bandwidth 128 MiB/s -> 32 s, got %d", got)
+	}
+}
+
+func TestInFlightMigrationBlocksTheVM(t *testing.T) {
+	nodes := []Node{node("A", 16, 15, 50), node("B", 16, 1, 99)}
+	v := vm("vm1", "A", 8, 7.6, 20, 0.30)
+	v.MigrationInFlight = true
+	if ds, _ := Plan([]VM{v}, nodes, policy()); len(ds) != 0 {
+		t.Fatalf("a VM being migrated must not be recommended again, got %+v", ds)
+	}
+}
+
+func TestStaleRecommendations(t *testing.T) {
+	nodes := []Node{node("A", 16, 15, 50), node("B", 16, 1, 99)}
+	pol := policy()
+	v := vm("vm1", "A", 8, 7.6, 28, 0.18)
+	if r := Stale(&v, "A", "B", nodes, pol); r != "" {
+		t.Fatalf("valid recommendation reported stale: %q", r)
+	}
+	moved := v
+	moved.Node = "B"
+	if r := Stale(&moved, "A", "B", nodes, pol); r == "" {
+		t.Fatal("moved VM must be stale")
+	}
+	recovered := v
+	recovered.Score, recovered.CPUReady = 92, 0.01
+	if r := Stale(&recovered, "A", "B", nodes, pol); r == "" {
+		t.Fatal("recovered VM must be stale")
+	}
+	full := nodes
+	full[1].VMDemandCPU = 15 // target filled up meanwhile: no headroom, no gain
+	if r := Stale(&v, "A", "B", full, pol); r == "" {
+		t.Fatal("target without headroom must be stale")
+	}
+	if r := Stale(nil, "A", "B", nodes, pol); r == "" {
+		t.Fatal("missing VM must be stale")
 	}
 }

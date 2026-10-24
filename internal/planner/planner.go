@@ -45,13 +45,9 @@ func Plan(vms []VM, nodes []Node, pol Policy) ([]Decision, []Skip) {
 			skip(vm.Key, "node %q unknown", vm.Node)
 			continue
 		}
-		// priority 1: the VM violates a rule where it runs (taint added, labels changed, ...).
-		mandatory := false
-		if vm.Pod != nil {
-			if r := Fits(vm, src, false); !r.OK {
-				mandatory = true
-			}
-		}
+		// priority 1: the VM violates a rule where it runs (admin taint added, labels changed, ...). A cordon
+		// or a NotReady node is not a rule: drain and node_ha own those.
+		mandatory := !ViolatesRules(vm, src).OK
 		if !vm.HasScore && !mandatory {
 			skip(vm.Key, "no score yet")
 			continue
@@ -76,6 +72,10 @@ func Plan(vms []VM, nodes []Node, pol Policy) ([]Decision, []Skip) {
 		}
 		if vm.HasPendingRecommendation {
 			skip(vm.Key, "a pending recommendation already exists")
+			continue
+		}
+		if vm.MigrationInFlight {
+			skip(vm.Key, "a migration is in flight")
 			continue
 		}
 		if in, left := InCooldown(vm, pol.Cooldown, pol.Now); in {
@@ -207,7 +207,7 @@ func CostSeconds(vm *VM, pol Policy) int32 {
 func reason(vm *VM, src, dst *Node, mandatory bool) string {
 	room := dst.AllocatableCPU - dst.VMDemandCPU - vm.CPUDemandCores
 	if mandatory {
-		r := Fits(vm, src, false)
+		r := ViolatesRules(vm, src)
 		return fmt.Sprintf("rule violated on %s (%s); %s fits with %.1f cores free after the move", src.Name, r.Reason, dst.Name, room)
 	}
 	cause := fmt.Sprintf("cpu_ready %.0f%%", vm.CPUReady*100)
@@ -215,4 +215,50 @@ func reason(vm *VM, src, dst *Node, mandatory bool) string {
 		cause = fmt.Sprintf("balloon reclaimed %.0f%% of guest memory", vm.MemReclaim*100)
 	}
 	return fmt.Sprintf("%s on %s; %s has %.1f cores free after the move", cause, src.Name, dst.Name, room)
+}
+
+// Stale says why a Pending recommendation for vm should be expired, or "" when it still holds. VMware
+// regenerates its recommendations every round and drops the ones that no longer apply; a stale proposal
+// left in Manual mode would move a VM that has recovered, or onto a node that has filled up meanwhile.
+func Stale(vm *VM, sourceNode, targetNode string, nodes []Node, pol Policy) string {
+	if vm == nil {
+		return "VM is gone or no longer running"
+	}
+	if vm.Node != sourceNode {
+		return fmt.Sprintf("VM is on %s now, not %s", vm.Node, sourceNode)
+	}
+	if vm.MigrationInFlight {
+		return "" // being executed, leave it
+	}
+	var src, dst *Node
+	for i := range nodes {
+		switch nodes[i].Name {
+		case sourceNode:
+			src = &nodes[i]
+		case targetNode:
+			dst = &nodes[i]
+		}
+	}
+	mandatory := src != nil && !ViolatesRules(vm, src).OK
+	if !mandatory && vm.HasScore {
+		if vm.Score >= float64(pol.Level.MinScore) {
+			return fmt.Sprintf("score recovered to %.0f (floor %d)", vm.Score, pol.Level.MinScore)
+		}
+		if vm.CPUReady < pol.HostCausedCPUReady && vm.MemReclaim < pol.HostCausedReclaim {
+			return "low score is no longer host-caused"
+		}
+	}
+	if dst == nil {
+		return "target node is gone"
+	}
+	if r := Fits(vm, dst, true); !r.OK {
+		return "target no longer fits: " + r.Reason
+	}
+	if !mandatory {
+		predicted, _ := Predict(vm, dst, pol)
+		if gain := predicted - vm.Score; gain < float64(pol.Level.MinGain) {
+			return fmt.Sprintf("target would gain only %.0f points now (< %d)", gain, pol.Level.MinGain)
+		}
+	}
+	return ""
 }

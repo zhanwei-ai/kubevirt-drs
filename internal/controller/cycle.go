@@ -185,6 +185,21 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 		Blacklist:            c.blacklistCopy(start),
 		Now:                  start,
 	}
+	// Pending recommendations are re-validated every cycle, like VMware regenerates its list: a VM that
+	// recovered, moved, or whose target filled up must not be applied by a late click.
+	byKey := make(map[planner.Key]*planner.VM, len(vms))
+	for i := range vms {
+		byKey[vms[i].Key] = &vms[i]
+	}
+	if n, err := c.Exec.ExpireStale(ctx, func(rec *drsv1alpha1.DRSRecommendation) string {
+		return planner.Stale(byKey[planner.Key{Namespace: rec.Namespace, Name: rec.Spec.VMI}], rec.Spec.SourceNode, rec.Spec.TargetNode, nodes, pp)
+	}); err != nil {
+		return interval, err
+	} else if n > 0 {
+		log.Info("expired stale recommendations", "count", n)
+		nPending -= n
+	}
+
 	var decisions []planner.Decision
 	var skips []planner.Skip
 	if pol.Spec.Paused {
@@ -222,7 +237,7 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 	if pol.Spec.ScoreAnnotation == nil || *pol.Spec.ScoreAnnotation {
 		for i := range vmis.Items {
 			vmi := &vmis.Items[i]
-			if mm := metrics.VM[planner.Key{Namespace: vmi.Namespace, Name: vmi.Name}]; mm != nil && mm.HasScore {
+			if mm := metrics.For(planner.Key{Namespace: vmi.Namespace, Name: vmi.Name}, vmi.Status.NodeName); mm != nil && mm.HasScore {
 				if err := c.Exec.SyncScoreAnnotation(ctx, vmi, mm.Score); err != nil {
 					log.V(1).Info("score annotation", "vmi", vmi.Name, "err", err.Error())
 				}
@@ -237,7 +252,7 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 	pol.Status.LastCycleDuration = &metav1.Duration{Duration: time.Since(start).Round(time.Millisecond)}
 	pol.Status.PendingRecommendations = int32(nPending)
 	pol.Status.InFlightMigrations = int32(migs.InFlight)
-	if cs := metrics.ClusterScore(); cs >= 0 {
+	if cs := metrics.ClusterScore(kube.VMINodes(vmis.Items)); cs >= 0 {
 		v := int32(math.Round(cs))
 		pol.Status.ClusterScore = &v
 		metricClusterScore.Set(cs)

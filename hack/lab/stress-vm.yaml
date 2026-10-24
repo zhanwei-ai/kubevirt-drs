@@ -1,44 +1,119 @@
+# Three small Fedora VMs that burn their vCPUs from first boot (no package install, no SSH needed): one
+# plain shell loop per vCPU via cloud-init. Create them on ONE node to produce CPU contention:
+#   kubectl cordon <every node but one>; kubectl apply -f hack/lab/stress-vm.yaml; kubectl uncordon ...
+# Sizing: 2 vCPU / 640Mi guest each. Three of them on a 4-core node = 6 busy vCPUs on 4 cores,
+# ~33 % CPU ready per vCPU -> score near 0; two of them ~10-15 % -> score 40-60.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: drs-lab
+  labels:
+    app.kubernetes.io/part-of: kubevirt-drs
+---
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
   name: stress-1
-  labels:
-    app: kubevirt-drs-lab
+  namespace: drs-lab
+  labels: {app: kubevirt-drs-lab}
 spec:
   runStrategy: Always
   template:
     metadata:
-      labels:
-        app: kubevirt-drs-lab
+      labels: {app: kubevirt-drs-lab}
     spec:
       evictionStrategy: LiveMigrate
       domain:
-        cpu:
-          cores: 2
-        memory:
-          guest: 2Gi
+        cpu: {cores: 2}
+        memory: {guest: 640Mi}
         devices:
           disks:
-            - name: root
-              disk:
-                bus: virtio
-            - name: cloudinit
-              disk:
-                bus: virtio
+            - {name: root, disk: {bus: virtio}}
+            - {name: cloudinit, disk: {bus: virtio}}
           interfaces:
-            - name: default
-              masquerade: {}
+            - {name: default, masquerade: {}}
       networks:
-        - name: default
-          pod: {}
+        - {name: default, pod: {}}
       volumes:
         - name: root
-          containerDisk:
-            image: quay.io/containerdisks/fedora:42
+          containerDisk: {image: quay.io/containerdisks/fedora:42}
         - name: cloudinit
           cloudInitNoCloud:
             userData: |
               #cloud-config
-              ssh_authorized_keys:
-                - ssh-ed25519 AAAA_REPLACE_ME your@key
-              packages: [stress-ng, sysbench]
+              password: kubevirt-drs
+              chpasswd: {expire: false}
+              runcmd:
+                - [sh, -c, "for i in $(seq $(nproc)); do nohup sh -c 'while :; do :; done' >/dev/null 2>&1 & done"]
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: stress-2
+  namespace: drs-lab
+  labels: {app: kubevirt-drs-lab}
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels: {app: kubevirt-drs-lab}
+    spec:
+      evictionStrategy: LiveMigrate
+      domain:
+        cpu: {cores: 2}
+        memory: {guest: 640Mi}
+        devices:
+          disks:
+            - {name: root, disk: {bus: virtio}}
+            - {name: cloudinit, disk: {bus: virtio}}
+          interfaces:
+            - {name: default, masquerade: {}}
+      networks:
+        - {name: default, pod: {}}
+      volumes:
+        - name: root
+          containerDisk: {image: quay.io/containerdisks/fedora:42}
+        - name: cloudinit
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              password: kubevirt-drs
+              chpasswd: {expire: false}
+              runcmd:
+                - [sh, -c, "for i in $(seq $(nproc)); do nohup sh -c 'while :; do :; done' >/dev/null 2>&1 & done"]
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: stress-3
+  namespace: drs-lab
+  labels: {app: kubevirt-drs-lab}
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels: {app: kubevirt-drs-lab}
+    spec:
+      evictionStrategy: LiveMigrate
+      domain:
+        cpu: {cores: 2}
+        memory: {guest: 640Mi}
+        devices:
+          disks:
+            - {name: root, disk: {bus: virtio}}
+            - {name: cloudinit, disk: {bus: virtio}}
+          interfaces:
+            - {name: default, masquerade: {}}
+      networks:
+        - {name: default, pod: {}}
+      volumes:
+        - name: root
+          containerDisk: {image: quay.io/containerdisks/fedora:42}
+        - name: cloudinit
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              password: kubevirt-drs
+              chpasswd: {expire: false}
+              runcmd:
+                - [sh, -c, "for i in $(seq $(nproc)); do nohup sh -c 'while :; do :; done' >/dev/null 2>&1 & done"]

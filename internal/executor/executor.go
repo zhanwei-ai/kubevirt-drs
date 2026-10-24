@@ -169,6 +169,33 @@ func (e *Executor) Expire(ctx context.Context, now time.Time) (int, error) {
 	return n, nil
 }
 
+// ExpireStale marks Pending recommendations whose premise no longer holds as Expired. `why` returns the
+// reason for one recommendation, or "" to keep it. Returns how many it expired.
+func (e *Executor) ExpireStale(ctx context.Context, why func(rec *drsv1alpha1.DRSRecommendation) string) (int, error) {
+	var list drsv1alpha1.DRSRecommendationList
+	if err := e.Client.List(ctx, &list); err != nil {
+		return 0, fmt.Errorf("list recommendations: %w", err)
+	}
+	n := 0
+	for i := range list.Items {
+		rec := &list.Items[i]
+		if rec.Status.Phase != drsv1alpha1.PhasePending || rec.Spec.Approved {
+			continue
+		}
+		reason := why(rec)
+		if reason == "" {
+			continue
+		}
+		rec.Status.Phase = drsv1alpha1.PhaseExpired
+		rec.Status.Message = "no longer valid: " + reason
+		if err := e.Client.Status().Update(ctx, rec); err != nil {
+			return n, fmt.Errorf("expire %s/%s: %w", rec.Namespace, rec.Name, err)
+		}
+		n++
+	}
+	return n, nil
+}
+
 // Pending returns the VMIs that have a Pending recommendation, and how many there are.
 func (e *Executor) Pending(ctx context.Context) (map[planner.Key]bool, int, error) {
 	var list drsv1alpha1.DRSRecommendationList
