@@ -94,9 +94,13 @@ Opt a VM out with the annotation `drs.zhanwei.ai/automation: disabled` on `spec.
 VirtualMachine (it propagates to the VMI); the descheduler's `prefer-no-eviction` works too.
 
 Safety that does not depend on anything else being configured correctly: cooldown read from the VMI's own
-`migrationState` (whoever migrated it), the descheduler's `prefer-no-eviction` annotation honoured, a
-watchdog that only ever deletes migrations it created, and an `ExternalEvacuationsDetected` condition when
-something else is moving VMs. See [docs/coexist-with-descheduler.md](docs/coexist-with-descheduler.md).
+`migrationState` (whoever migrated it), the descheduler's `prefer-no-eviction` annotation honoured, pending
+recommendations re-validated every cycle and expired with a reason when they stop holding, proposed and
+in-flight moves reserving capacity on their target and settling their source, a watchdog that only ever
+deletes migrations it created (a pinned target that did not fit: deleted after 2 min, pair blacklisted 1 h),
+and an `ExternalEvacuationsDetected` condition when something else is moving VMs. Optional soft tainter:
+`spec.softTainter: true` puts a PreferNoSchedule taint on hot nodes so new VMs avoid them too. See
+[docs/coexist-with-descheduler.md](docs/coexist-with-descheduler.md).
 
 ## Overhead
 
@@ -111,7 +115,7 @@ bandwidth cap. Healthy cluster = zero migrations.
 | --- | --- |
 | v0.1 | score rules, dashboard, chart, this scaffold |
 | v0.2 | controller in Manual mode: recommendations, approve-to-apply, events, metrics |
-| v0.3 | FullyAutomated, watchdog + blacklist, soft tainter, rule-violation (priority-1) moves, calibrated levels, benchmark vs descheduler |
+| v0.3 | watchdog + blacklist, reserved capacity + settle period, soft tainter, rule-violation (priority-1) moves (done); calibrated levels and benchmark vs descheduler (lab work) |
 | v1.0 | version matrix (KubeVirt 1.9+, k8s 1.34+), e2e on kind, docs |
 | later | optional PSI node signal, Prometheus-free mode (scrape virt-handler directly), Headlamp panel, kubectl plugin |
 

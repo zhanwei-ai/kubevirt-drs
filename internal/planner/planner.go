@@ -20,6 +20,8 @@ func Plan(vms []VM, nodes []Node, pol Policy) ([]Decision, []Skip) {
 		skip(Key{}, "cluster migration limit reached (%d in flight, limit %d)", pol.InFlight, pol.ClusterLimit)
 		return nil, skips
 	}
+	// work on a copy: reservations made during this cycle must not leak into the caller's slice
+	nodes = append([]Node(nil), nodes...)
 	byName := make(map[string]*Node, len(nodes))
 	for i := range nodes {
 		byName[nodes[i].Name] = &nodes[i]
@@ -86,6 +88,10 @@ func Plan(vms []VM, nodes []Node, pol Policy) ([]Decision, []Skip) {
 			skip(vm.Key, "another move already planned from %s this cycle", vm.Node)
 			continue
 		}
+		if !mandatory && src.SettlingUntil.After(pol.Now) {
+			skip(vm.Key, "%s is settling after a recent move (until %s)", vm.Node, src.SettlingUntil.UTC().Format(time.TimeOnly))
+			continue
+		}
 		if pol.PerNodeLimit > 0 && src.OutboundInFlight+planned[vm.Node] >= pol.PerNodeLimit {
 			skip(vm.Key, "outbound limit of %s reached (%d)", vm.Node, pol.PerNodeLimit)
 			continue
@@ -144,6 +150,7 @@ func Plan(vms []VM, nodes []Node, pol Policy) ([]Decision, []Skip) {
 		}
 		decisions = append(decisions, d)
 		planned[vm.Node]++
+		best.ReservedCPU += vm.CPUDemandCores // later candidates in this cycle see the target as fuller
 	}
 	return decisions, skips
 }
@@ -163,7 +170,7 @@ func effectiveScore(vm *VM) float64 {
 func Predict(vm *VM, target *Node, pol Policy) (score float64, headroom float64) {
 	headroom = 1
 	if target.AllocatableCPU > 0 {
-		headroom = 1 - (target.VMDemandCPU+vm.CPUDemandCores)/target.AllocatableCPU
+		headroom = 1 - (target.VMDemandCPU+target.ReservedCPU+vm.CPUDemandCores)/target.AllocatableCPU
 	}
 	limit := pol.TargetHeadroom
 	if limit <= 0 {
@@ -205,7 +212,7 @@ func CostSeconds(vm *VM, pol Policy) int32 {
 }
 
 func reason(vm *VM, src, dst *Node, mandatory bool) string {
-	room := dst.AllocatableCPU - dst.VMDemandCPU - vm.CPUDemandCores
+	room := dst.AllocatableCPU - dst.VMDemandCPU - dst.ReservedCPU - vm.CPUDemandCores
 	if mandatory {
 		r := ViolatesRules(vm, src)
 		return fmt.Sprintf("rule violated on %s (%s); %s fits with %.1f cores free after the move", src.Name, r.Reason, dst.Name, room)

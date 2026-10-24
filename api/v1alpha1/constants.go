@@ -54,4 +54,6 @@ const (
 	DeschedulerPreferNoEviction = "descheduler.alpha.kubernetes.io/prefer-no-eviction"
 	// PolicyName is the only allowed name of the DRSPolicy singleton.
 	PolicyName = "default"
+	// TaintHot is the PreferNoSchedule taint the soft tainter puts on hot nodes (value "true").
+	TaintHot = "drs.zhanwei.ai/hot"
 )

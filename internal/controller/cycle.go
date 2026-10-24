@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -24,6 +25,8 @@ import (
 	"github.com/zhanwei-ai/kubevirt-drs/internal/kube"
 	"github.com/zhanwei-ai/kubevirt-drs/internal/planner"
 	"github.com/zhanwei-ai/kubevirt-drs/internal/scorer"
+	"github.com/zhanwei-ai/kubevirt-drs/internal/tainter"
+	"github.com/zhanwei-ai/kubevirt-drs/internal/watchdog"
 )
 
 // Cycle is the brain's loop: every DRSPolicy.spec.cycleInterval it collects, decides and acts. It runs on the
@@ -145,9 +148,26 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 	if _, err := c.Exec.Expire(ctx, start); err != nil {
 		return interval, err
 	}
-	pending, nPending, err := c.Exec.Pending(ctx)
+	pendingRecs, err := c.Exec.Pending(ctx)
 	if err != nil {
 		return interval, err
+	}
+	pending := make(map[planner.Key]bool, len(pendingRecs))
+	reservations := make([]kube.Reservation, 0, len(pendingRecs)+len(migs.Moves))
+	for i := range pendingRecs {
+		r := &pendingRecs[i]
+		k := planner.Key{Namespace: r.Namespace, Name: r.Spec.VMI}
+		pending[k] = true
+		reservations = append(reservations, kube.Reservation{VMI: k, Source: r.Spec.SourceNode, Target: r.Spec.TargetNode})
+	}
+	nPending := len(pendingRecs)
+	settle := kube.Duration(pol.Spec.Scoring.SmoothingWindow, 5*time.Minute)
+	for _, mv := range migs.Moves {
+		if mv.InFlight {
+			reservations = append(reservations, kube.Reservation{VMI: mv.VMI, Source: mv.Source, Target: mv.Target})
+		} else if !mv.End.IsZero() && start.Sub(mv.End) <= settle {
+			reservations = append(reservations, kube.Reservation{VMI: mv.VMI, Source: mv.Source, Target: mv.Target, Done: mv.End})
+		}
 	}
 	nsSel, vmSel, err := selectors(&pol)
 	if err != nil {
@@ -165,6 +185,19 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 		return interval, err
 	}
 	nodes := kube.BuildNodes(nodeList.Items, metrics, migs)
+	demandOf := map[planner.Key]float64{}
+	for i := range vms {
+		demandOf[vms[i].Key] = vms[i].CPUDemandCores
+	}
+	kube.ApplyReservations(nodes, reservations, func(k planner.Key) float64 { return demandOf[k] }, start, settle)
+
+	// ---- watchdog: our own migrations that never found a node -----------------------------------
+	wd := &watchdog.Watchdog{Client: c.Client, Exec: c.Exec, Blacklist: c.Blacklist, Log: log.WithName("watchdog")}
+	if n, err := wd.Run(ctx, migs.Moves, start, kube.Duration(pol.Spec.Watchdog.GracePeriod, 2*time.Minute), kube.Duration(pol.Spec.Watchdog.BlacklistFor, time.Hour)); err != nil {
+		return interval, err
+	} else if n > 0 {
+		metricStalled.Add(float64(n))
+	}
 
 	setCond(&pol, drsv1alpha1.ConditionExternalEvacuationsDetected, migs.ExternalEvacuations > 0, "Detected", "None",
 		pick(migs.ExternalEvacuations > 0,
@@ -183,6 +216,7 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 		TargetHeadroom:       0.8,
 		BandwidthBytesPerSec: limits.BandwidthBytesPerSec,
 		Blacklist:            c.blacklistCopy(start),
+		SettleWindow:         settle,
 		Now:                  start,
 	}
 	// Pending recommendations are re-validated every cycle, like VMware regenerates its list: a VM that
@@ -244,6 +278,23 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 			}
 		}
 	}
+
+	// ---- soft tainter -----------------------------------------------------------------------------
+	softTainter := pol.Spec.SoftTainter != nil && *pol.Spec.SoftTainter
+	hotNodes, changedTaints, err := tainter.Reconcile(ctx, c.Client, nodeList.Items, tainter.Hot(nodes, pp), softTainter)
+	if err != nil {
+		return interval, err
+	}
+	if changedTaints > 0 {
+		log.Info("soft taints reconciled", "hot", hotNodes, "changed", changedTaints)
+	}
+	metricHotNodes.Set(float64(len(hotNodes)))
+	pol.Status.HotNodes = hotNodes
+	pol.Status.BlacklistedPairs = nil
+	for pair, until := range c.blacklistCopy(start) {
+		pol.Status.BlacklistedPairs = append(pol.Status.BlacklistedPairs, fmt.Sprintf("%s->%s until %s", pair.Source, pair.Target, until.UTC().Format(time.RFC3339)))
+	}
+	sort.Strings(pol.Status.BlacklistedPairs)
 
 	// ---- status -----------------------------------------------------------------------------------
 	setCond(&pol, drsv1alpha1.ConditionReady, true, pick(pol.Spec.Paused, "Paused", "Ready"), "", pick(pol.Spec.Paused, "dependencies healthy; spec.paused=true, scoring only", "dependencies healthy"))

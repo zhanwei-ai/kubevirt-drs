@@ -291,3 +291,37 @@ func TestStaleRecommendations(t *testing.T) {
 		t.Fatal("missing VM must be stale")
 	}
 }
+
+// Two suffering VMs on different source nodes in one cycle: the second must not be sent to the node the
+// first one already claimed when that would leave it without headroom (lab finding 2026-10-24).
+func TestReservedCapacityKeepsTargetsApart(t *testing.T) {
+	nodes := []Node{node("A", 4, 3.8, 30), node("B", 4, 3.8, 30), node("C", 4, 0.4, 99), node("D", 4, 1.0, 99)}
+	vms := []VM{vm("vm1", "A", 2, 1.9, 25, 0.20), vm("vm2", "B", 2, 1.9, 28, 0.19)}
+	ds, skips := Plan(vms, nodes, policy())
+	if len(ds) != 2 {
+		t.Fatalf("want two moves, got %+v (skips %+v)", ds, skips)
+	}
+	if ds[0].TargetNode == ds[1].TargetNode {
+		t.Fatalf("both moves went to %s", ds[0].TargetNode)
+	}
+	// with D removed, C can hold only one of them under the 80 %% headroom rule: the second is skipped
+	ds, _ = Plan(vms, nodes[:3], policy())
+	if len(ds) != 1 {
+		t.Fatalf("C has room for one VM only, got %+v", ds)
+	}
+}
+
+func TestSettlingSourceIsNotASourceAgain(t *testing.T) {
+	nodes := []Node{node("A", 16, 15, 50), node("B", 16, 1, 99)}
+	nodes[0].SettlingUntil = now.Add(3 * time.Minute)
+	v := vm("vm1", "A", 8, 7.6, 28, 0.18)
+	if ds, _ := Plan([]VM{v}, nodes, policy()); len(ds) != 0 {
+		t.Fatalf("settling node must not be a source, got %+v", ds)
+	}
+	// ... unless the move is mandatory
+	drain := corev1.Taint{Key: "maintenance", Effect: corev1.TaintEffectNoSchedule}
+	nodes[0].Obj.Spec.Taints = []corev1.Taint{drain}
+	if ds, _ := Plan([]VM{v}, nodes, policy()); len(ds) != 1 || ds[0].Priority != 1 {
+		t.Fatalf("mandatory move must ignore settling, got %+v", ds)
+	}
+}

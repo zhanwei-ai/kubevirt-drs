@@ -5,8 +5,8 @@ description: >-
   recording rules (per-VM 0..100 from vCPU delay, memory reclaim, swap, page faults and packet drops) and the
   brain that turns low, host-caused scores into approved (Manual) or automatic live migrations.
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.3.0
+appVersion: "0.3.0"
 kubeVersion: ">=1.33.0-0"
 home: https://github.com/zhanwei-ai/kubevirt-drs
 sources:

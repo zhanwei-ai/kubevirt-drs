@@ -76,6 +76,13 @@
           }
         },
         "recommendationTTL": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"},
+        "watchdog": {
+          "type": "object",
+          "properties": {
+            "gracePeriod": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"},
+            "blacklistFor": {"type": "string", "pattern": "^[0-9]+(s|m|h)$"}
+          }
+        },
         "scoreAnnotation": {"type": "boolean"},
         "softTainter": {"type": "boolean"},
         "paused": {"type": "boolean"}

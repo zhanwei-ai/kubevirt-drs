@@ -70,6 +70,13 @@ type Node struct {
 	HasScore bool
 	// OutboundInFlight: migrations currently leaving this node (any creator).
 	OutboundInFlight int
+	// ReservedCPU: cores that proposed (pending) or in-flight moves will add to this node, counted before
+	// the metrics show them. Keeps two VMs from being sent to the same target in consecutive cycles.
+	ReservedCPU float64
+	// SettlingUntil: a move left this node recently (in flight, or completed inside the settle window); the
+	// remaining VMs' smoothed scores still reflect the old contention, so no further load-balancing move is
+	// taken from it until then. Mandatory moves ignore it.
+	SettlingUntil time.Time
 }
 
 // Pair is a (source, target) node pair, the unit of the watchdog's blacklist.
@@ -99,7 +106,10 @@ type Policy struct {
 	// 0 = unknown, DefaultBandwidth is used.
 	BandwidthBytesPerSec float64
 	Blacklist            map[Pair]time.Time
-	Now                  time.Time
+	// SettleWindow is how long after a move left a node the node is not a source again (the scoring
+	// smoothing window).
+	SettleWindow time.Duration
+	Now          time.Time
 }
 
 // DefaultBandwidth is assumed for the cost estimate when nothing better is known (128 MiB/s).

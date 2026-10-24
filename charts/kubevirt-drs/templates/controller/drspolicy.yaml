@@ -15,6 +15,9 @@ spec:
     max: {{ $p.cooldown.max }}
     historyWindow: {{ $p.cooldown.historyWindow }}
   recommendationTTL: {{ $p.recommendationTTL }}
+  watchdog:
+    gracePeriod: {{ $p.watchdog.gracePeriod }}
+    blacklistFor: {{ $p.watchdog.blacklistFor }}
   scoreAnnotation: {{ $p.scoreAnnotation }}
   softTainter: {{ $p.softTainter }}
   paused: {{ $p.paused }}

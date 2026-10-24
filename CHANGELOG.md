@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+### Added
+- **Watchdog**: a brain-created migration still Pending/Scheduling after `spec.watchdog.gracePeriod` (2m) is
+  deleted, its recommendation marked Failed with the reason, and the (source, target) pair blacklisted for
+  `spec.watchdog.blacklistFor` (1h). Evacuations and user migrations are never touched. Status shows the
+  blacklisted pairs; metric `kubevirt_drs_stalled_migrations_total`.
+- **Reserved capacity and settle period**: proposed (pending) and in-flight moves reserve their VM's CPU
+  demand on the target before the metrics show it, and a node a move just left is not a source again until
+  the smoothing window passes. Two VMs are no longer sent to the same target in consecutive cycles.
+- **Soft tainter** (`spec.softTainter: true`): PreferNoSchedule taint `drs.zhanwei.ai/hot` on nodes whose VMs
+  score below the threshold floor or whose VM demand exceeds the headroom; removed on recovery. Status lists
+  the hot nodes; metric `kubevirt_drs_hot_nodes`.
+
 ## [0.2.0] - 2026-10-24
 
 The brain, verified end to end on a 3-node KubeVirt 1.9.1 cluster in Manual mode (see the fixes below).

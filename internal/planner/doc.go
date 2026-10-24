@@ -13,7 +13,10 @@
 //     the best.
 //  4. cost/benefit: gain = predicted - current must exceed the level's MinGain; the target's own score may
 //     not drop below the source's (no ping-pong); the (source, target) pair is not blacklisted.
-//  5. at most one move per source node per cycle.
+//  5. at most one move per source node per cycle; a node a move just left (in flight, or finished inside the
+//     settle window) is not a source again until the window passes, because the remaining VMs' smoothed
+//     scores still show the old contention. Proposed and in-flight moves reserve their VM's demand on the
+//     target, so consecutive cycles do not send a second VM to a node the first one is about to fill.
 //
 // Priority-1 moves (the VM violates a rule where it runs: fits(vmi, currentNode) is false) bypass the score
 // gate and MinGain, like VMware's mandatory recommendations, but still obey cooldown and limits.
