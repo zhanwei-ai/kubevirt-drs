@@ -61,7 +61,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.description=VMware DRS-style VM scoring and live-migration balancing for KubeVirt
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2
       - name: Sign the image (keyless, GitHub OIDC)
         run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
       - name: SBOM of the image (CycloneDX) + attestation
@@ -124,7 +124,7 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2
       - uses: azure/setup-helm@v5
         with:
           version: ${{ env.HELM_VERSION }}

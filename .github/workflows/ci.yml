@@ -66,9 +66,9 @@ jobs:
       - name: helm lint + template (controller on and off)
         run: |
           helm lint charts/kubevirt-drs
-          api="--kube-version 1.36.0 --api-versions monitoring.coreos.com/v1/PrometheusRule --api-versions monitoring.coreos.com/v1/ServiceMonitor --api-versions kubevirt.io/v1/VirtualMachineInstance"
-          helm template drs charts/kubevirt-drs $api > /tmp/score-only.yaml
-          helm template drs charts/kubevirt-drs $api --set controller.enabled=true --set controller.serviceMonitor.enabled=true --set prometheusRule.deschedulerBridge.enabled=true > /tmp/full.yaml
+          api=(--kube-version 1.36.0 --api-versions monitoring.coreos.com/v1/PrometheusRule --api-versions monitoring.coreos.com/v1/ServiceMonitor --api-versions kubevirt.io/v1/VirtualMachineInstance)
+          helm template drs charts/kubevirt-drs "${api[@]}" > /tmp/score-only.yaml
+          helm template drs charts/kubevirt-drs "${api[@]}" --set controller.enabled=true --set controller.serviceMonitor.enabled=true --set prometheusRule.deschedulerBridge.enabled=true > /tmp/full.yaml
           helm template drs charts/kubevirt-drs --kube-version 1.36.0 2>&1 | grep -q 'PrometheusRule (monitoring.coreos.com/v1) is not served' \
             && echo "render refuses without the Prometheus Operator CRD: ok"
       - name: kubeconform
