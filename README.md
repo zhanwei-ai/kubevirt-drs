@@ -3,8 +3,9 @@
 **VMware DRS-style resource scheduling for KubeVirt: a per-VM score, and a brain that live-migrates the VM
 that is actually suffering to the node where it will do better.**
 
-> Status: **alpha, v0.1 = score only.** The recording rules are usable today; the controller that acts on
-> them lands in v0.2 (Manual mode) and v0.3 (FullyAutomated). Nothing in v0.1 moves a VM.
+> Status: **alpha.** v0.1 ships the score only. The `main` branch carries the brain in Manual mode
+> (`controller.enabled=true`): it writes recommendations and applies the ones you approve; `FullyAutomated`
+> exists but has not been calibrated on real load yet, and the watchdog for stalled migrations lands in v0.3.
 > Not affiliated with or endorsed by the KubeVirt project or Broadcom/VMware.
 
 ## Why
@@ -61,7 +62,7 @@ helm install kubevirt-drs oci://ghcr.io/zhanwei-ai/charts/kubevirt-drs --version
 Then in Prometheus: `vmi:drs_score`. A Grafana dashboard ships as a ConfigMap (`dashboard.enabled`).
 Without the operator, load [docs/examples/drs-rules.yaml](docs/examples/drs-rules.yaml) yourself.
 
-## What the brain will do (v0.2+)
+## What the brain does
 
 One cycle a minute, single replica, no webhooks:
 
@@ -77,6 +78,20 @@ One cycle a minute, single replica, no webhooks:
    points), target must not end up worse than the source (no ping-pong), pair not blacklisted.
 5. **record**: a `DRSRecommendation` with current score, expected score, reason and cost. `Manual` waits
    for `spec.approved: true`; `FullyAutomated` applies it: a VMIM pinned with `addedNodeSelector`.
+
+Try it (Manual mode is the default; nothing moves until you approve):
+
+```bash
+helm upgrade --install kubevirt-drs oci://ghcr.io/zhanwei-ai/charts/kubevirt-drs -n kubevirt-drs \
+  --set controller.enabled=true --set prometheus.url=http://kube-prometheus-stack-prometheus.monitoring.svc:9090
+kubectl get drspolicy default                       # Ready must be True (see the conditions otherwise)
+kubectl get drsrec -A                               # recommendations with current / expected score and the reason
+kubectl -n <ns> patch drsrec <name> --type merge -p '{"spec":{"approved":true}}'   # apply one
+kubectl -n <ns> get vmim -l drs.zhanwei.ai/recommendation=<name>                   # the migration it created
+```
+
+Opt a VM out with the annotation `drs.zhanwei.ai/automation: disabled` on `spec.template.metadata` of the
+VirtualMachine (it propagates to the VMI); the descheduler's `prefer-no-eviction` works too.
 
 Safety that does not depend on anything else being configured correctly: cooldown read from the VMI's own
 `migrationState` (whoever migrated it), the descheduler's `prefer-no-eviction` annotation honoured, a
