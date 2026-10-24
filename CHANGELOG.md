@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-25
+
+The safety layer for automatic mode, verified on the lab cluster: a stuck pinned migration cleaned up in 2m44s, two squeezed VMs sent to two different targets, the hot taint on and off with the load.
+
 ### Added
 - **Watchdog**: a brain-created migration still Pending/Scheduling after `spec.watchdog.gracePeriod` (2m) is
   deleted, its recommendation marked Failed with the reason, and the (source, target) pair blacklisted for
@@ -15,6 +19,13 @@ All notable changes to this project are documented here. The format follows Keep
 - **Soft tainter** (`spec.softTainter: true`): PreferNoSchedule taint `drs.zhanwei.ai/hot` on nodes whose VMs
   score below the threshold floor or whose VM demand exceeds the headroom; removed on recovery. Status lists
   the hot nodes; metric `kubevirt_drs_hot_nodes`.
+- A pinned migration that KubeVirt's own pending-target timeout fails before it started blacklists its pair as well.
+
+### Fixed
+- `helm upgrade --reuse-values` from a 0.2 release no longer fails on the missing `policy.watchdog` values.
+
+### Known
+- The blacklist is kept in memory: a controller restart forgets it (the policy status still lists it). Fixed in the next release.
 
 ## [0.2.0] - 2026-10-24
 
@@ -56,6 +67,7 @@ Score-only release: installs the DRS Score, moves nothing. The controller arrive
 - Design docs and ADRs.
 - Release pipeline: image and chart on GHCR, cosign keyless signatures, CycloneDX SBOM attestation, GitHub release with a post-publish verification job.
 
-[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zhanwei-ai/kubevirt-drs/releases/tag/v0.1.0
