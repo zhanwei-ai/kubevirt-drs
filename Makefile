@@ -13,7 +13,7 @@ KUBECONFORM_IMAGE      ?= ghcr.io/yannh/kubeconform:v0.8.0
 # API versions the chart's Capabilities checks need when rendering offline.
 HELM_API_VERSIONS := --kube-version 1.36.0 --api-versions monitoring.coreos.com/v1/PrometheusRule --api-versions monitoring.coreos.com/v1/ServiceMonitor --api-versions kubevirt.io/v1/VirtualMachineInstance
 
-.PHONY: all generate manifests build test vet fmt lint chart-lint rules-check rules-export image verify-generated help
+.PHONY: all generate manifests build test vet fmt lint chart-lint rules-check rules-export image e2e verify-generated help
 
 all: generate manifests build test
 
@@ -65,6 +65,10 @@ rules-export:
 ## rules-check: promtool check rules on the exported file
 rules-check: rules-export
 	$(ENGINE) run --rm -v $(CURDIR):/src:Z -w /src --entrypoint promtool $(PROMETHEUS_IMAGE) check rules docs/examples/drs-rules.yaml
+
+## e2e: kind + KubeVirt (emulation) + fake Prometheus; needs kind, kubectl, helm, docker (KEEP=1 keeps the cluster)
+e2e:
+	ENGINE=$(ENGINE) test/e2e/run.sh
 
 image:
 	$(ENGINE) build -f Containerfile -t $(IMAGE):$(VERSION) --build-arg VERSION=$(VERSION) .

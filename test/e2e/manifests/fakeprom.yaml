@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fakeprom-scenario
+  namespace: default
+data:
+  scenario.json: |
+    {"vmis": [], "nodes": {}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fakeprom
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: fakeprom}
+  template:
+    metadata:
+      labels: {app: fakeprom}
+    spec:
+      containers:
+        - name: fakeprom
+          image: ghcr.io/zhanwei-ai/kubevirt-drs-fakeprom:e2e
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 9090}]
+          readinessProbe:
+            httpGet: {path: /-/ready, port: 9090}
+          volumeMounts:
+            - {name: scenario, mountPath: /scenario}
+      volumes:
+        - name: scenario
+          configMap: {name: fakeprom-scenario}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fakeprom
+  namespace: default
+spec:
+  selector: {app: fakeprom}
+  ports: [{port: 9090, targetPort: 9090}]
