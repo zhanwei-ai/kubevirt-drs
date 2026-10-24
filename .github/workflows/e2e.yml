@@ -19,7 +19,7 @@ jobs:
       matrix:
         include:
           - kubevirt: v1.9.1
-            node_image: kindest/node:v1.34.11
+            node_image: ""   # empty = the default node image of this kind release (image and binary must match)
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
@@ -28,6 +28,7 @@ jobs:
       - uses: helm/kind-action@v1
         with:
           install_only: true
+          version: v0.33.0
       - name: Run the e2e
         env:
           KUBEVIRT_VERSION: ${{ matrix.kubevirt }}
