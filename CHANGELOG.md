@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+### Added
+- kind e2e: two more scenarios after the FullyAutomated one: Manual mode (the recommendation waits unapproved
+  for two cycles, then a hand approval turns it into the pinned migration) and the watchdog (a recommendation
+  pinned to a node that does not exist is cleaned up after the grace period, Failed, blacklisted with a
+  Warning Event, and the blacklist survives a controller restart).
+
 ### Fixed
 - The blacklist survives a controller restart: it is reloaded from `status.blacklistedPairs` on the first cycle.
 
