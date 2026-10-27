@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-28
+
+Patch release from the lab runs of 2026-10-27: the planner no longer expires its own pending recommendation, the blacklist survives a restart, the cost estimate follows the rate migrations really achieve, and the kind e2e covers Manual approval and the watchdog.
+
 ### Added
 - kind e2e: two more scenarios after the FullyAutomated one: Manual mode (the recommendation waits unapproved
   for two cycles, then a hand approval turns it into the pinned migration) and the watchdog (a recommendation
@@ -85,7 +89,8 @@ Score-only release: installs the DRS Score, moves nothing. The controller arrive
 - Design docs and ADRs.
 - Release pipeline: image and chart on GHCR, cosign keyless signatures, CycloneDX SBOM attestation, GitHub release with a post-publish verification job.
 
-[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zhanwei-ai/kubevirt-drs/releases/tag/v0.1.0
