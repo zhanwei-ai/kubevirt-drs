@@ -258,11 +258,20 @@ func Stale(vm *VM, sourceNode, targetNode string, nodes []Node, pol Policy) stri
 	if dst == nil {
 		return "target node is gone"
 	}
-	if r := Fits(vm, dst, true); !r.OK {
+	// The cycle's reservations already count this recommendation's own VM on the target (a pending move
+	// reserves its demand there, kube.ApplyReservations). Re-validating the same move must not add the VM a
+	// second time: counted twice, any VM using more than 40 % of the target's cores pushed the predicted
+	// headroom under the limit and expired its recommendation one cycle after it was made (lab, 2026-10-27).
+	target := *dst
+	target.ReservedCPU -= vm.CPUDemandCores
+	if target.ReservedCPU < 0 {
+		target.ReservedCPU = 0
+	}
+	if r := Fits(vm, &target, true); !r.OK {
 		return "target no longer fits: " + r.Reason
 	}
 	if !mandatory {
-		predicted, _ := Predict(vm, dst, pol)
+		predicted, _ := Predict(vm, &target, pol)
 		if gain := predicted - vm.Score; gain < float64(pol.Level.MinGain) {
 			return fmt.Sprintf("target would gain only %.0f points now (< %d)", gain, pol.Level.MinGain)
 		}

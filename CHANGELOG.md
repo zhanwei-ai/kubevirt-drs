@@ -11,6 +11,10 @@ All notable changes to this project are documented here. The format follows Keep
   Warning Event, and the blacklist survives a controller restart).
 
 ### Fixed
+- A pending recommendation no longer expires itself: its own reservation on the target was counted on top of
+  the VM when the move was re-validated, so a VM using more than 40 % of the target's cores was judged "would
+  gain only 0 points" one cycle after it was recommended, and the brain alternated between two squeezed VMs
+  forever (lab cluster, 2026-10-27). The kind e2e now gives vm2 45 % of a node to catch this.
 - The blacklist survives a controller restart: it is reloaded from `status.blacklistedPairs` on the first cycle.
 
 ### Changed

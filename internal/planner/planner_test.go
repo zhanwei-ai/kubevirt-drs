@@ -292,6 +292,23 @@ func TestStaleRecommendations(t *testing.T) {
 	}
 }
 
+// A pending recommendation reserves its own VM's demand on the target (kube.ApplyReservations); re-validating
+// it must not count the VM twice. Lab 2026-10-27: every recommendation for a VM using more than 40 % of the
+// target's cores expired one cycle after it was made ("target would gain only 0 points now"), and the brain
+// alternated between the two squeezed VMs forever.
+func TestStaleIgnoresTheRecommendationsOwnReservation(t *testing.T) {
+	nodes := []Node{node("A", 4, 3.8, 30), node("B", 4, 0, 99)}
+	v := vm("vm1", "A", 2, 1.9, 25, 0.20)
+	nodes[1].ReservedCPU = v.CPUDemandCores // what ApplyReservations adds for this very recommendation
+	if r := Stale(&v, "A", "B", nodes, policy()); r != "" {
+		t.Fatalf("recommendation reported stale because of its own reservation: %q", r)
+	}
+	nodes[1].ReservedCPU += 1.9 // another VM is headed for B as well: now the move really leaves no headroom
+	if r := Stale(&v, "A", "B", nodes, policy()); r == "" {
+		t.Fatal("target claimed by another move must be stale")
+	}
+}
+
 // Two suffering VMs on different source nodes in one cycle: the second must not be sent to the node the
 // first one already claimed when that would leave it without headroom (lab finding 2026-10-24).
 func TestReservedCapacityKeepsTargetsApart(t *testing.T) {
