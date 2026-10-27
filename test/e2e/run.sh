@@ -143,11 +143,16 @@ SRC2="$(kubectl get vmi vm2 -o jsonpath='{.status.nodeName}')"
 [[ "$SRC2" == "$TARGET" ]] || die "vm2 landed on $SRC2, expected $TARGET (cordon did not hold?)"
 UID2="$(kubectl get vmi vm2 -o jsonpath='{.metadata.uid}')"
 TARGET2="$SRC"
-# vm1 (healthy) shares $SRC2 with vm2; $TARGET2 is empty.
-d_src=1.0; d_tgt=0
-echo "    vm2 on $SRC2, expected target $TARGET2"
+# vm2's demand is 45 % of the target's cores: enough to fit once (headroom 55 %) but not twice. A stale check
+# that counted the recommendation's own reservation on top of the VM (fixed after the 2026-10-27 lab run)
+# would expire it one cycle later and fail the "still Pending" check below.
+D2="$(kubectl get node "$TARGET2" -o jsonpath='{.status.allocatable.cpu}' | python3 -c 'import sys
+s=sys.stdin.read().strip(); a=float(s[:-1])/1000 if s.endswith("m") else float(s); print(round(0.45*a, 2))')"
+# vm1 (healthy, 0.5 cores) shares $SRC2 with vm2; $TARGET2 is empty.
+d_src="$(python3 -c "print(round(0.5 + $D2, 2))")"; d_tgt=0
+echo "    vm2 on $SRC2 (demand $D2 cores), expected target $TARGET2"
 kubectl patch drspolicy default --type merge -p '{"spec":{"automationLevel":"Manual"}}' >/dev/null
-set_scenario "{\"vmis\":[{\"namespace\":\"default\",\"name\":\"vm1\",\"node\":\"$TARGET\",\"score\":99,\"cpuReady\":0.001,\"cpuDemand\":0.5,\"vcpus\":1},{\"namespace\":\"default\",\"name\":\"vm2\",\"node\":\"$SRC2\",\"score\":20,\"cpuReady\":0.25,\"cpuDemand\":0.5,\"vcpus\":1}],\"nodes\":{\"$SRC2\":{\"vmDemand\":$d_src,\"score\":20},\"$TARGET2\":{\"vmDemand\":$d_tgt,\"score\":99}}}"
+set_scenario "{\"vmis\":[{\"namespace\":\"default\",\"name\":\"vm1\",\"node\":\"$TARGET\",\"score\":99,\"cpuReady\":0.001,\"cpuDemand\":0.5,\"vcpus\":1},{\"namespace\":\"default\",\"name\":\"vm2\",\"node\":\"$SRC2\",\"score\":20,\"cpuReady\":0.25,\"cpuDemand\":$D2,\"vcpus\":1}],\"nodes\":{\"$SRC2\":{\"vmDemand\":$d_src,\"score\":20},\"$TARGET2\":{\"vmDemand\":$d_tgt,\"score\":99}}}"
 wait_for 300 "a recommendation for vm2 exists" bash -c "kubectl get drsrec -n default -l drs.zhanwei.ai/vmi=vm2 --no-headers 2>/dev/null | grep -q ."
 REC2="$(kubectl get drsrec -n default -l drs.zhanwei.ai/vmi=vm2 -o jsonpath='{.items[0].metadata.name}')"
 kubectl get drsrec -n default "$REC2" -o custom-columns='NAME:.metadata.name,FROM:.spec.sourceNode,TO:.spec.targetNode,SCORE:.spec.currentScore,EXPECTED:.spec.expectedScore,APPROVED:.spec.approved,PHASE:.status.phase'
