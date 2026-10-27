@@ -130,19 +130,25 @@ n="$(kubectl get drsrec -A --no-headers | grep -c Pending || true)"
 kubectl get drspolicy default
 
 # ---- scenario 2: Manual mode. A fresh VMI (vm1 is on cooldown after its move) so the planner may propose it.
-log "Manual mode: VMI vm2"
+# vm2 goes next to vm1 on $TARGET: the node a move just left ($SRC) is not a source again until the smoothing
+# window (5m) has passed, so a vm2 scheduled there would wait that long for its recommendation. $SRC is cordoned
+# only while vm2 schedules (a cordon is not a rule violation and the taint goes before the scenario starts).
+log "Manual mode: VMI vm2 (on $TARGET next to vm1; $SRC cordoned while it schedules)"
+kubectl cordon "$SRC" >/dev/null
 sed -e "s/__KUBEVIRT_VERSION__/${KUBEVIRT_VERSION}/" -e "s/name: vm1/name: vm2/" "$ROOT/test/e2e/manifests/vmi.yaml" | kubectl apply -f - >/dev/null
 wait_for 600 "vm2 Running" bash -c "[[ \$(kubectl get vmi vm2 -o jsonpath='{.status.phase}') == Running ]]"
+kubectl uncordon "$SRC" >/dev/null
 wait_for 300 "vm2 LiveMigratable" bash -c "[[ \$(kubectl get vmi vm2 -o jsonpath='{.status.conditions[?(@.type==\"LiveMigratable\")].status}') == True ]]"
 SRC2="$(kubectl get vmi vm2 -o jsonpath='{.status.nodeName}')"
+[[ "$SRC2" == "$TARGET" ]] || die "vm2 landed on $SRC2, expected $TARGET (cordon did not hold?)"
 UID2="$(kubectl get vmi vm2 -o jsonpath='{.metadata.uid}')"
-TARGET2=""; for w in "${WORKERS[@]}"; do [[ "$w" != "$SRC2" ]] && TARGET2="$w" && break; done
-# vm1 (healthy, on $TARGET) adds its demand to whichever node it shares with vm2's source or target.
-d_src=0.5; d_tgt=0; [[ "$TARGET" == "$SRC2" ]] && d_src=1.0; [[ "$TARGET" == "$TARGET2" ]] && d_tgt=0.5
+TARGET2="$SRC"
+# vm1 (healthy) shares $SRC2 with vm2; $TARGET2 is empty.
+d_src=1.0; d_tgt=0
 echo "    vm2 on $SRC2, expected target $TARGET2"
 kubectl patch drspolicy default --type merge -p '{"spec":{"automationLevel":"Manual"}}' >/dev/null
 set_scenario "{\"vmis\":[{\"namespace\":\"default\",\"name\":\"vm1\",\"node\":\"$TARGET\",\"score\":99,\"cpuReady\":0.001,\"cpuDemand\":0.5,\"vcpus\":1},{\"namespace\":\"default\",\"name\":\"vm2\",\"node\":\"$SRC2\",\"score\":20,\"cpuReady\":0.25,\"cpuDemand\":0.5,\"vcpus\":1}],\"nodes\":{\"$SRC2\":{\"vmDemand\":$d_src,\"score\":20},\"$TARGET2\":{\"vmDemand\":$d_tgt,\"score\":99}}}"
-wait_for 240 "a recommendation for vm2 exists" bash -c "kubectl get drsrec -n default -l drs.zhanwei.ai/vmi=vm2 --no-headers 2>/dev/null | grep -q ."
+wait_for 300 "a recommendation for vm2 exists" bash -c "kubectl get drsrec -n default -l drs.zhanwei.ai/vmi=vm2 --no-headers 2>/dev/null | grep -q ."
 REC2="$(kubectl get drsrec -n default -l drs.zhanwei.ai/vmi=vm2 -o jsonpath='{.items[0].metadata.name}')"
 kubectl get drsrec -n default "$REC2" -o custom-columns='NAME:.metadata.name,FROM:.spec.sourceNode,TO:.spec.targetNode,SCORE:.spec.currentScore,EXPECTED:.spec.expectedScore,APPROVED:.spec.approved,PHASE:.status.phase'
 [[ "$(kubectl get drsrec -n default "$REC2" -o jsonpath='{.spec.targetNode}')" == "$TARGET2" ]] || die "vm2 recommendation targets the wrong node"
@@ -163,7 +169,7 @@ wait_for 600 "migration $MIG2 Succeeded" bash -c "[[ \$(kubectl get vmim -n defa
 set_scenario "{\"vmis\":[{\"namespace\":\"default\",\"name\":\"vm1\",\"node\":\"$TARGET\",\"score\":99,\"cpuReady\":0.001,\"cpuDemand\":0.5,\"vcpus\":1},{\"namespace\":\"default\",\"name\":\"vm2\",\"node\":\"$TARGET2\",\"score\":99,\"cpuReady\":0.001,\"cpuDemand\":0.5,\"vcpus\":1}],\"nodes\":{\"$SRC2\":{\"vmDemand\":0},\"$TARGET2\":{\"vmDemand\":1.0,\"score\":99}}}"
 
 # ---- scenario 3: watchdog. A hand-made approved recommendation pinned to a node that cannot exist.
-log "watchdog: grace period 30s, bogus target for vm1 (on $TARGET)"
+log "watchdog: grace period 30s, bogus target for vm1 (on $SRC2)"
 kubectl patch drspolicy default --type merge -p '{"spec":{"watchdog":{"gracePeriod":"30s","blacklistFor":"1h"}}}' >/dev/null
 cat <<EOF | kubectl apply -f - >/dev/null
 apiVersion: drs.zhanwei.ai/v1alpha1
@@ -174,7 +180,7 @@ metadata:
   labels: {drs.zhanwei.ai/vmi: vm1}
 spec:
   vmi: vm1
-  sourceNode: $TARGET
+  sourceNode: $SRC2
   targetNode: no-such-node
   currentScore: 50
   expectedScore: 100
@@ -188,16 +194,16 @@ MIG3="$(kubectl get drsrec -n default watchdog-bogus-target -o jsonpath='{.statu
 wait_for 180 "stuck migration $MIG3 deleted by the watchdog" bash -c "! kubectl get vmim -n default $MIG3 >/dev/null 2>&1"
 [[ "$(kubectl get drsrec -n default watchdog-bogus-target -o jsonpath='{.status.phase}')" == Failed ]] || die "recommendation should be Failed after the watchdog: $(kubectl get drsrec -n default watchdog-bogus-target -o jsonpath='{.status.phase}')"
 kubectl get drsrec -n default watchdog-bogus-target -o jsonpath='    message: {.status.message}{"\n"}'
-[[ "$(kubectl get drspolicy default -o jsonpath='{.status.blacklistedPairs}')" == *"$TARGET->no-such-node"* ]] || die "pair $TARGET->no-such-node not blacklisted: $(kubectl get drspolicy default -o jsonpath='{.status.blacklistedPairs}')"
+[[ "$(kubectl get drspolicy default -o jsonpath='{.status.blacklistedPairs[*]}')" == *"$SRC2->no-such-node"* ]] || die "pair $SRC2->no-such-node not blacklisted: $(kubectl get drspolicy default -o jsonpath='{.status.blacklistedPairs[*]}')"
 kubectl get events -n default --field-selector reason=DRSMigrationStalled -o custom-columns='TYPE:.type,OBJ:.involvedObject.name,MSG:.message' | tail -2
 [[ -n "$(kubectl get events -n default --field-selector reason=DRSMigrationStalled,type=Warning -o name)" ]] || die "no Warning Event DRSMigrationStalled"
-[[ "$(kubectl get vmi vm1 -o jsonpath='{.status.nodeName}')" == "$TARGET" ]] || die "vm1 moved during the watchdog test"
+[[ "$(kubectl get vmi vm1 -o jsonpath='{.status.nodeName}')" == "$SRC2" ]] || die "vm1 moved during the watchdog test"
 log "watchdog: the blacklist survives a controller restart"
 CYCLE_BEFORE="$(kubectl get drspolicy default -o jsonpath='{.status.lastCycleTime}')"
 kubectl -n kubevirt-drs rollout restart deploy/kubevirt-drs >/dev/null
 kubectl -n kubevirt-drs rollout status deploy/kubevirt-drs --timeout=120s >/dev/null
 wait_for 120 "a cycle ran after the restart" bash -c "[[ \$(kubectl get drspolicy default -o jsonpath='{.status.lastCycleTime}') != '$CYCLE_BEFORE' ]]"
 sleep 25   # one more cycle: the restored blacklist must still be written back
-[[ "$(kubectl get drspolicy default -o jsonpath='{.status.blacklistedPairs}')" == *"$TARGET->no-such-node"* ]] || die "blacklist lost after the controller restart"
-kubectl get drspolicy default -o jsonpath='    blacklist: {.status.blacklistedPairs}{"\n"}'
+[[ "$(kubectl get drspolicy default -o jsonpath='{.status.blacklistedPairs[*]}')" == *"$SRC2->no-such-node"* ]] || die "blacklist lost after the controller restart"
+kubectl get drspolicy default -o jsonpath='    blacklist: {.status.blacklistedPairs[*]}{"\n"}'
 log "e2e passed"
