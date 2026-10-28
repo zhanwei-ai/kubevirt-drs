@@ -3,9 +3,10 @@
 **VMware DRS-style resource scheduling for KubeVirt: a per-VM score, and a brain that live-migrates the VM
 that is actually suffering to the node where it will do better.**
 
-> Status: **alpha.** v0.1 ships the score only. The `main` branch carries the brain in Manual mode
-> (`controller.enabled=true`): it writes recommendations and applies the ones you approve; `FullyAutomated`
-> exists but has not been calibrated on real load yet, and the watchdog for stalled migrations lands in v0.3.
+> Status: **alpha**, v0.3.1. The score, the brain (`controller.enabled=true`; Manual by default,
+> `FullyAutomated` available), the watchdog with its blacklist and the soft tainter are released, verified on a
+> 3-node KubeVirt 1.9.1 lab cluster and by a kind e2e that runs on every PR. The levels are not calibrated on
+> real load yet: read [docs/calibration.md](docs/calibration.md) before turning on `FullyAutomated`.
 > Not affiliated with or endorsed by the KubeVirt project or Broadcom/VMware.
 
 ## Why
@@ -48,13 +49,14 @@ Efficiencies multiply, as in VMware's VM DRS Score. `node:drs_score:avg` and `cl
 vCPU-weighted. Details and the calibration method: [docs/scoring.md](docs/scoring.md),
 [docs/calibration.md](docs/calibration.md).
 
-## Install (score only, v0.1)
+## Install
 
-Requires a Prometheus Operator that scrapes KubeVirt (e.g. kube-prometheus-stack with KubeVirt's
-ServiceMonitor; `kubevirt_vmi_vcpu_delay_seconds_total` must have series).
+The default install is score-only: the recording rules and the dashboard, nothing that moves a VM. The brain
+is `controller.enabled=true` (next section). Requires a Prometheus Operator that scrapes KubeVirt (e.g.
+kube-prometheus-stack with KubeVirt's ServiceMonitor; `kubevirt_vmi_vcpu_delay_seconds_total` must have series).
 
 ```bash
-helm install kubevirt-drs oci://ghcr.io/zhanwei-ai/charts/kubevirt-drs --version 0.1.0 -n kubevirt-drs --create-namespace
+helm install kubevirt-drs oci://ghcr.io/zhanwei-ai/charts/kubevirt-drs --version 0.3.1 -n kubevirt-drs --create-namespace
 # If your Prometheus Operator uses a ruleSelector, add its label:
 #   --set prometheusRule.additionalLabels.release=kube-prometheus-stack
 ```
@@ -113,19 +115,40 @@ bandwidth cap. Healthy cluster = zero migrations.
 
 | version | content |
 | --- | --- |
-| v0.1 | score rules, dashboard, chart, this scaffold |
-| v0.2 | controller in Manual mode: recommendations, approve-to-apply, events, metrics |
-| v0.3 | watchdog + blacklist, reserved capacity + settle period, soft tainter, rule-violation (priority-1) moves (done); calibrated levels and benchmark vs descheduler (lab work) |
-| v1.0 | version matrix (KubeVirt 1.9+, k8s 1.34+), e2e on kind, docs |
+| v0.1 | score rules, dashboard, chart (shipped) |
+| v0.2 | controller in Manual mode: recommendations, approve-to-apply, events, metrics (shipped) |
+| v0.3 | watchdog + blacklist, reserved capacity + settle period, soft tainter, rule-violation (priority-1) moves, kind e2e in CI: FullyAutomated move, Manual approval, watchdog across a restart (shipped, 0.3.1) |
+| next | calibrated levels and benchmark vs descheduler (lab work, see [docs/calibration.md](docs/calibration.md)) |
+| v1.0 | version matrix (KubeVirt 1.9+, k8s 1.34+), docs |
 | later | optional PSI node signal, Prometheus-free mode (scrape virt-handler directly), Headlamp panel, kubectl plugin |
 
 Not planned: DPM (power management), predictive DRS, load-aware *initial* placement (soft taints help,
 a scheduler plugin would be the real thing).
 
+## Development
+
+Every `make` target works without a local Go toolchain: `hack/go.sh` runs `go` in a container when it is not on
+`PATH` (podman or docker). Details and the testing levels: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+```bash
+make build test lint          # go build / go test (writes coverage.out) / golangci-lint
+make generate manifests       # controller-gen: deepcopy, CRDs, RBAC; commit the result, CI diffs it
+make chart-lint rules-check   # helm lint + template + kubeconform; promtool on the exported rules
+make e2e                      # kind + KubeVirt (software emulation) + a scripted Prometheus, about 12 min
+make clean                    # bin/, dist/, coverage files, packaged charts
+```
+
+`make e2e` needs kind, kubectl, helm and docker. It is the script CI runs ([test/e2e/run.sh](test/e2e/run.sh));
+CI pins kind v0.33.0, `kindest/node:v1.36.4` and KubeVirt v1.9.1 in
+[.github/workflows/e2e.yml](.github/workflows/e2e.yml), so set `KUBEVIRT_VERSION` and `KIND_NODE_IMAGE` the
+same way to reproduce a run. The Makefile picks podman over docker when both are installed; kind then needs
+`KIND_EXPERIMENTAL_PROVIDER=podman`, or pass `ENGINE=docker make e2e`. `KEEP=1` keeps the cluster
+`kubevirt-drs-e2e` for a look afterwards; delete it before the next run, the scenarios expect a fresh cluster.
+
 ## Docs
 
 [concepts](docs/concepts.md) · [scoring](docs/scoring.md) · [calibration](docs/calibration.md) ·
 [coexisting with a descheduler](docs/coexist-with-descheduler.md) · [limits](docs/limits.md) ·
-[decisions (ADRs)](docs/adr) · [contributing](CONTRIBUTING.md) · [security](SECURITY.md)
+[decisions (ADRs)](docs/adr) · [changelog](CHANGELOG.md) · [contributing](CONTRIBUTING.md) · [security](SECURITY.md)
 
 Apache-2.0.
