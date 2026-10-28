@@ -13,7 +13,7 @@ KUBECONFORM_IMAGE      ?= ghcr.io/yannh/kubeconform:v0.8.0
 # API versions the chart's Capabilities checks need when rendering offline.
 HELM_API_VERSIONS := --kube-version 1.36.0 --api-versions monitoring.coreos.com/v1/PrometheusRule --api-versions monitoring.coreos.com/v1/ServiceMonitor --api-versions kubevirt.io/v1/VirtualMachineInstance
 
-.PHONY: all generate manifests build test vet fmt lint chart-lint rules-check rules-export image e2e verify-generated help
+.PHONY: all generate manifests build test vet fmt lint chart-lint rules-check rules-export image e2e verify-generated clean help
 
 all: generate manifests build test
 
@@ -72,6 +72,10 @@ e2e:
 
 image:
 	$(ENGINE) build -f Containerfile -t $(IMAGE):$(VERSION) --build-arg VERSION=$(VERSION) .
+
+## clean: build artifacts (bin/, dist/, coverage files, packaged charts); the Go caches of hack/go.sh are in ~/.cache/kubevirt-drs
+clean:
+	rm -rf bin dist coverage.* charts/*.tgz
 
 help:
 	@grep -E '^## ' Makefile | sed 's/^## //'
