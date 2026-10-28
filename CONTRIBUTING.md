@@ -17,10 +17,16 @@ Thanks for looking. The project is young; design discussions are as welcome as c
 `make` targets run in a `golang` container when `go` is not on `PATH` (see `hack/go.sh`). You need podman or docker.
 
 ```bash
-make generate manifests   # controller-gen: deepcopy, CRDs, RBAC
-make build test lint      # go build / go test / golangci-lint
+make generate manifests       # controller-gen: deepcopy, CRDs, RBAC
+make build test lint          # go build / go test / golangci-lint
 make chart-lint rules-check   # helm lint + template, promtool check rules on the rendered PrometheusRule
+make e2e                      # kind + KubeVirt (emulation) + scripted Prometheus; needs kind, kubectl, helm, docker
+make clean                    # bin/, dist/, coverage files, packaged charts
 ```
+
+`make e2e` is the script CI runs; the pinned kind / node image / KubeVirt versions, the environment variables
+that reproduce a CI run, `ENGINE=docker` for a machine that also has podman, and `KEEP=1` are in the README's
+Development section.
 
 ## Testing levels
 
@@ -28,7 +34,7 @@ make chart-lint rules-check   # helm lint + template, promtool check rules on th
 | --- | --- | --- |
 | unit | `internal/**/*_test.go` | planner decisions on table-driven scenarios (the VM1/VM2 "moved the wrong VM" case is a regression test) |
 | envtest | `internal/**` | reconcilers against a real API server |
-| e2e | `test/e2e/run.sh` (`make e2e`, CI workflow `e2e`) | kind with two workers + KubeVirt in software emulation + a scripted stand-in for Prometheus (`test/e2e/fakeprom`): Prometheus says a VM suffers → recommendation → pinned migration → the VM runs on the other node with the same UID → healthy again, nothing else moves. Wiring, not performance |
+| e2e | `test/e2e/run.sh` (`make e2e`, CI workflow `e2e`) | kind with two workers + KubeVirt in software emulation + a scripted stand-in for Prometheus (`test/e2e/fakeprom`), three scenarios in order. FullyAutomated: Prometheus says a VM suffers → recommendation → pinned migration → the VM runs on the other node with the same UID → healthy again, nothing else moves. Manual: the recommendation waits unapproved for two cycles, a hand approval turns it into the pinned migration. Watchdog: a recommendation pinned to a node that does not exist → migration deleted after the grace period, recommendation Failed, pair blacklisted with a Warning Event, and the blacklist survives a controller restart. Wiring, not performance |
 | lab | your cluster | calibration with stress-ng; see `docs/calibration.md` |
 
 ## Code of conduct
