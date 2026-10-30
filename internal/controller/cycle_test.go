@@ -9,12 +9,12 @@ import (
 
 func TestBlacklistEntryRoundTrip(t *testing.T) {
 	until := time.Date(2026, 10, 24, 15, 16, 20, 0, time.UTC)
-	e := blacklistEntry(planner.Pair{Source: "192.168.20.197", Target: "no-such-node"}, until)
-	if e != "192.168.20.197->no-such-node until 2026-10-24T15:16:20Z" {
+	e := blacklistEntry(planner.Pair{Source: "node-a", Target: "no-such-node"}, until)
+	if e != "node-a->no-such-node until 2026-10-24T15:16:20Z" {
 		t.Fatalf("format changed: %q", e)
 	}
 	p, got, ok := parseBlacklistEntry(e)
-	if !ok || p.Source != "192.168.20.197" || p.Target != "no-such-node" || !got.Equal(until) {
+	if !ok || p.Source != "node-a" || p.Target != "no-such-node" || !got.Equal(until) {
 		t.Fatalf("parse: %+v %v %v", p, got, ok)
 	}
 	for _, bad := range []string{"", "garbage", "a->b until yesterday", "ab until 2026-10-24T15:16:20Z"} {
