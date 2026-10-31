@@ -6,9 +6,8 @@ anything that could make it migrate the wrong VM, migrate in a loop, or exceed t
 the KubeVirt CR as a security issue.
 
 **Please do not open public issues for vulnerabilities.** Use GitHub's private vulnerability reporting on this
-repository ("Security" tab, "Report a vulnerability"; available once the repository is public). While it is
-internal, contact a maintainer listed in `.github/CODEOWNERS` directly. You will get an acknowledgement within
-5 working days.
+repository ("Security" tab, "Report a vulnerability"). If that form is not offered, contact a maintainer listed
+in `.github/CODEOWNERS` directly. You will get an acknowledgement within 5 working days.
 
 Supported versions: the latest minor release. Images are signed with cosign (keyless, GitHub OIDC) and ship a
 CycloneDX SBOM; verify with `cosign verify ghcr.io/zhanwei-ai/kubevirt-drs:<tag> --certificate-identity-regexp
