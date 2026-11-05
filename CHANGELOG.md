@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-05
+
+Patch release from the FullyAutomated acceptance run on the jade-platform demo cluster (2026-11-05): a recommendation the brain applied itself no longer ends `Failed` after the cycle and the reconciler race each other to create the migration.
+
 ### Fixed
 - FullyAutomated: a recommendation could end up `Failed` with "in-flight migration detected" although its
   migration ran and succeeded. The cycle applies a pre-approved recommendation right after creating it and
@@ -99,7 +103,8 @@ Score-only release: installs the DRS Score, moves nothing. The controller arrive
 - Design docs and ADRs.
 - Release pipeline: image and chart on GHCR, cosign keyless signatures, CycloneDX SBOM attestation, GitHub release with a post-publish verification job.
 
-[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.1.0...v0.2.0
