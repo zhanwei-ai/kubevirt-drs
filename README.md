@@ -3,7 +3,7 @@
 **VMware DRS-style resource scheduling for KubeVirt: a per-VM score, and a brain that live-migrates the VM
 that is actually suffering to the node where it will do better.**
 
-> Status: **alpha**, v0.3.1. The score, the brain (`controller.enabled=true`; Manual by default,
+> Status: **alpha**, v0.3.2. The score, the brain (`controller.enabled=true`; Manual by default,
 > `FullyAutomated` available), the watchdog with its blacklist and the soft tainter are released, verified on a
 > 3-node KubeVirt 1.9.1 lab cluster and by a kind e2e that runs on every PR. The levels are not calibrated on
 > real load yet: read [docs/calibration.md](docs/calibration.md) before turning on `FullyAutomated`.
@@ -56,7 +56,7 @@ is `controller.enabled=true` (next section). Requires a Prometheus Operator that
 kube-prometheus-stack with KubeVirt's ServiceMonitor; `kubevirt_vmi_vcpu_delay_seconds_total` must have series).
 
 ```bash
-helm install kubevirt-drs oci://ghcr.io/zhanwei-ai/charts/kubevirt-drs --version 0.3.1 -n kubevirt-drs --create-namespace
+helm install kubevirt-drs oci://ghcr.io/zhanwei-ai/charts/kubevirt-drs --version 0.3.2 -n kubevirt-drs --create-namespace
 # If your Prometheus Operator uses a ruleSelector, add its label:
 #   --set prometheusRule.additionalLabels.release=kube-prometheus-stack
 ```
@@ -117,7 +117,7 @@ bandwidth cap. Healthy cluster = zero migrations.
 | --- | --- |
 | v0.1 | score rules, dashboard, chart (shipped) |
 | v0.2 | controller in Manual mode: recommendations, approve-to-apply, events, metrics (shipped) |
-| v0.3 | watchdog + blacklist, reserved capacity + settle period, soft tainter, rule-violation (priority-1) moves, kind e2e in CI: FullyAutomated move, Manual approval, watchdog across a restart (shipped, 0.3.1) |
+| v0.3 | watchdog + blacklist, reserved capacity + settle period, soft tainter, rule-violation (priority-1) moves, kind e2e in CI: FullyAutomated move, Manual approval, watchdog across a restart (shipped, 0.3.2) |
 | next | calibrated levels and benchmark vs descheduler (lab work, see [docs/calibration.md](docs/calibration.md)) |
 | v1.0 | version matrix (KubeVirt 1.9+, k8s 1.34+), docs |
 | later | optional PSI node signal, Prometheus-free mode (scrape virt-handler directly), Headlamp panel, kubectl plugin |
