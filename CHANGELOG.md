@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+### Fixed
+- FullyAutomated: a recommendation could end up `Failed` with "in-flight migration detected" although its
+  migration ran and succeeded. The cycle applies a pre-approved recommendation right after creating it and
+  the recommendation reconciler applies it again on the create event; the loser's status write hit a
+  conflict, its retry re-judged the VMI and asked KubeVirt for a second migration (the webhook refuses it
+  before the API server would say AlreadyExists) and overwrote the result. `Apply` now looks for its own
+  migration first (cache, then the API reader when the webhook says in-flight), adopts it (`AppliedAt` = its
+  creation time) or returns when the winner already recorded it, and retries status writes on conflict.
+  Seen on the jade-platform demo cluster (lab/drs, 2026-11-05).
+
 ## [0.3.1] - 2026-10-28
 
 Patch release from the lab runs of 2026-10-27: the planner no longer expires its own pending recommendation, the blacklist survives a restart, the cost estimate follows the rate migrations really achieve, and the kind e2e covers Manual approval and the watchdog.

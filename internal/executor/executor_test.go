@@ -24,6 +24,11 @@ import (
 var now = time.Date(2026, 10, 24, 14, 30, 0, 0, time.UTC)
 
 func newExecutor(t *testing.T, objs ...client.Object) (*Executor, client.Client) {
+	return newExecutorWith(t, interceptor.Funcs{}, objs...)
+}
+
+// newExecutorWith lets a test put its own Get / Create in front of the fake client (a stale cache, a webhook).
+func newExecutorWith(t *testing.T, hooks interceptor.Funcs, objs ...client.Object) (*Executor, client.Client) {
 	t.Helper()
 	s := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(s); err != nil {
@@ -68,7 +73,16 @@ func newExecutor(t *testing.T, objs ...client.Object) (*Executor, client.Client)
 					stored.DeepCopyInto(v)
 					return nil
 				}
+				if hooks.Get != nil {
+					return hooks.Get(ctx, cl, key, obj, opts...)
+				}
 				return cl.Get(ctx, key, obj, opts...)
+			},
+			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if hooks.Create != nil {
+					return hooks.Create(ctx, cl, obj, opts...)
+				}
+				return cl.Create(ctx, obj, opts...)
 			},
 			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				if _, ok := obj.(*kubevirtv1.VirtualMachineInstance); ok {
@@ -227,5 +241,153 @@ func TestNames(t *testing.T) {
 	}
 	if recName("Web-01", now) != "web-01-20261024-143000" {
 		t.Fatalf("got %q", recName("Web-01", now))
+	}
+}
+
+// FullyAutomated creates the recommendation pre-approved; the reconciler applies it on the create event while
+// Recommend is still writing Pending, so the first status write of Apply can hit a conflict. It must re-read
+// and retry, not leave a migration behind with the recommendation stuck in Pending (or Failed on the retry).
+func TestApplyRetriesTheStatusWriteAfterAConflict(t *testing.T) {
+	ctx := context.Background()
+	ex, c := newExecutor(t, runningVMI("vm1", "A"))
+	rec, err := ex.Recommend(ctx, decision("vm1"), true, 10*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := rec.DeepCopy() // what the reconciler read
+	rec.Status.Message = "re-validated by the cycle"
+	if err := c.Status().Update(ctx, rec); err != nil { // lands between the read and Apply's write
+		t.Fatal(err)
+	}
+	if err := ex.Apply(ctx, stale, now); err != nil {
+		t.Fatalf("Apply must survive the conflict: %v", err)
+	}
+	if stale.Status.Phase != drsv1alpha1.PhaseApplied || stale.Status.Migration == "" {
+		t.Fatalf("not applied after the retry: %+v", stale.Status)
+	}
+	var got drsv1alpha1.DRSRecommendation
+	if err := c.Get(ctx, client.ObjectKeyFromObject(rec), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Phase != drsv1alpha1.PhaseApplied || got.Status.Migration != stale.Status.Migration || got.ResourceVersion != stale.ResourceVersion {
+		t.Fatalf("stored %+v (rv %s) != returned %+v (rv %s)", got.Status, got.ResourceVersion, stale.Status, stale.ResourceVersion)
+	}
+	var migs kubevirtv1.VirtualMachineInstanceMigrationList
+	if err := c.List(ctx, &migs, client.InNamespace("default")); err != nil || len(migs.Items) != 1 {
+		t.Fatalf("exactly one migration expected: %d %v", len(migs.Items), err)
+	}
+}
+
+// The retry after a lost status write may run against a cache that has not seen the first attempt's migration:
+// its Create reaches KubeVirt's webhook, which refuses with "in-flight migration detected" (the webhook runs
+// before the name-uniqueness check, so AlreadyExists never comes). Apply must then find its own migration
+// through the API reader and adopt it, stamping the VMI as if it had created it now.
+func TestApplyAdoptsTheMigrationKubeVirtSaysIsInFlight(t *testing.T) {
+	ctx := context.Background()
+	webhook, staleGets := false, 0
+	hooks := interceptor.Funcs{
+		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*kubevirtv1.VirtualMachineInstanceMigration); ok && staleGets > 0 {
+				staleGets--
+				return apierrors.NewNotFound(kubevirtv1.Resource("virtualmachineinstancemigrations"), key.Name)
+			}
+			return cl.Get(ctx, key, obj, opts...)
+		},
+		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*kubevirtv1.VirtualMachineInstanceMigration); ok && webhook {
+				return apierrors.NewForbidden(kubevirtv1.Resource("virtualmachineinstancemigrations"), obj.GetName(),
+					fmt.Errorf("admission webhook \"migration-create-validator.kubevirt.io\" denied the request: in-flight migration detected. Active migration job (fec638bc) is currently already in progress for VMI vm1"))
+			}
+			return cl.Create(ctx, obj, opts...)
+		},
+	}
+	ex, c := newExecutorWith(t, hooks, runningVMI("vm1", "A"))
+	ex.Reader = c // the "uncached" read: same store, the stale cache is the one Get above
+	rec, err := ex.Recommend(ctx, decision("vm1"), true, 10*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := &kubevirtv1.VirtualMachineInstanceMigration{ // attempt 1's migration
+		ObjectMeta: metav1.ObjectMeta{Name: migrationName(rec.Name), Namespace: "default", Labels: map[string]string{drsv1alpha1.LabelRecommendation: rec.Name}},
+		Spec:       kubevirtv1.VirtualMachineInstanceMigrationSpec{VMIName: "vm1", AddedNodeSelector: map[string]string{corev1.LabelHostname: "C"}},
+	}
+	if err := c.Create(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	webhook, staleGets = true, 1
+	if err := ex.Apply(ctx, rec, now); err != nil {
+		t.Fatalf("Apply must adopt its own migration: %v", err)
+	}
+	if rec.Status.Phase != drsv1alpha1.PhaseApplied || rec.Status.Migration != first.Name {
+		t.Fatalf("not adopted: %+v", rec.Status)
+	}
+	var migs kubevirtv1.VirtualMachineInstanceMigrationList
+	if err := c.List(ctx, &migs, client.InNamespace("default")); err != nil || len(migs.Items) != 1 {
+		t.Fatalf("exactly one migration expected: %d %v", len(migs.Items), err)
+	}
+	var vmi kubevirtv1.VirtualMachineInstance
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "vm1"}, &vmi); err != nil {
+		t.Fatal(err)
+	}
+	if vmi.Annotations[drsv1alpha1.AnnotationLastMigratedAt] == "" {
+		t.Fatalf("VMI not stamped on adoption: %v", vmi.Annotations)
+	}
+
+	// a same-named migration that is NOT ours is never adopted: Apply reports it instead of claiming it
+	ex2, c2 := newExecutorWith(t, hooks, runningVMI("vm1", "A"))
+	ex2.Reader = c2
+	webhook = false
+	rec2, err := ex2.Recommend(ctx, decision("vm1"), true, 10*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := &kubevirtv1.VirtualMachineInstanceMigration{
+		ObjectMeta: metav1.ObjectMeta{Name: migrationName(rec2.Name), Namespace: "default"},
+		Spec:       kubevirtv1.VirtualMachineInstanceMigrationSpec{VMIName: "vm1"},
+	}
+	if err := c2.Create(ctx, foreign); err != nil {
+		t.Fatal(err)
+	}
+	webhook = true
+	if err := ex2.Apply(ctx, rec2, now); err == nil || rec2.Status.Phase == drsv1alpha1.PhaseApplied {
+		t.Fatalf("a foreign migration must not be adopted: err=%v status=%+v", err, rec2.Status)
+	}
+}
+
+// The loser of the cycle-vs-reconciler race may retry only after the migration has finished: the VMI then
+// sits on the target, which must not be mistaken for "VMI moved since the recommendation was made".
+func TestApplyAdoptsEvenWhenTheVMIAlreadyMoved(t *testing.T) {
+	ctx := context.Background()
+	ex, c := newExecutor(t, runningVMI("vm1", "A"))
+	rec, err := ex.Recommend(ctx, decision("vm1"), true, 10*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := rec.DeepCopy()
+	if err := ex.Apply(ctx, rec, now); err != nil { // the winner
+		t.Fatal(err)
+	}
+	var vmi kubevirtv1.VirtualMachineInstance
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "vm1"}, &vmi); err != nil {
+		t.Fatal(err)
+	}
+	vmi.Status.NodeName = "C" // the migration ran (the harness keeps VMIs in its own store: plain Update)
+	if err := c.Update(ctx, &vmi); err != nil {
+		t.Fatal(err)
+	}
+	if err := ex.Apply(ctx, stale, now.Add(time.Minute)); err != nil { // the loser, late
+		t.Fatal(err)
+	}
+	if stale.Status.Phase != drsv1alpha1.PhaseApplied || stale.Status.Migration != rec.Status.Migration {
+		t.Fatalf("late retry must adopt, got %+v", stale.Status)
+	}
+	if !stale.Status.AppliedAt.Time.Equal(rec.Status.AppliedAt.Time) {
+		t.Fatalf("late retry must keep the winner's AppliedAt: %v vs %v", stale.Status.AppliedAt, rec.Status.AppliedAt)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "default", Name: "vm1"}, &vmi); err != nil {
+		t.Fatal(err)
+	}
+	if vmi.Annotations[drsv1alpha1.AnnotationLastMigratedAt] != now.UTC().Format(time.RFC3339) {
+		t.Fatalf("the no-op retry must not re-stamp the VMI: %v", vmi.Annotations)
 	}
 }

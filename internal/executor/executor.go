@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/retry"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -25,8 +26,19 @@ const LabelVMI = "drs.zhanwei.ai/vmi"
 
 // Executor writes the objects a decision needs. It holds no eviction verb and never deletes a pod or VM.
 type Executor struct {
-	Client   client.Client
+	Client client.Client
+	// Reader reads straight from the API server (manager.GetAPIReader()); nil = Client. Used where the cache may
+	// not have caught up yet: confirming a migration KubeVirt says is already in flight, re-reading a
+	// recommendation after a status conflict.
+	Reader   client.Reader
 	Recorder events.EventRecorder
+}
+
+func (e *Executor) reader() client.Reader {
+	if e.Reader != nil {
+		return e.Reader
+	}
+	return e.Client
 }
 
 // Recommend records a decision as a DRSRecommendation. approved=true (FullyAutomated) lets the reconciler
@@ -62,52 +74,87 @@ func (e *Executor) Recommend(ctx context.Context, d planner.Decision, approved b
 }
 
 // Apply creates the VirtualMachineInstanceMigration for an approved, still-valid recommendation, stamps the
-// VMI and emits an Event. It is idempotent: an existing migration of the same name is adopted.
+// VMI and emits an Event. It is idempotent: the migration of an earlier attempt (same name, our label) is
+// adopted, and once the recommendation already records it there is nothing to do. Earlier attempts are real,
+// not theoretical: in FullyAutomated mode the cycle applies the recommendation right after creating it and
+// the recommendation reconciler applies it again on the create event; the loser must find the migration the
+// winner made instead of judging the VMI again (it may already sit on the target) or asking KubeVirt for a
+// second migration, which the webhook refuses ("in-flight migration detected") before the API server would
+// ever report AlreadyExists.
 func (e *Executor) Apply(ctx context.Context, rec *drsv1alpha1.DRSRecommendation, now time.Time) error {
-	var vmi kubevirtv1.VirtualMachineInstance
-	if err := e.Client.Get(ctx, types.NamespacedName{Namespace: rec.Namespace, Name: rec.Spec.VMI}, &vmi); err != nil {
-		if apierrors.IsNotFound(err) {
-			return e.fail(ctx, rec, "VMI no longer exists")
-		}
+	name := migrationName(rec.Name)
+	own, err := e.ownMigration(ctx, e.Client, rec, name)
+	if err != nil {
 		return err
 	}
-	if vmi.Status.Phase != kubevirtv1.Running {
-		return e.fail(ctx, rec, fmt.Sprintf("VMI is %s, not Running", vmi.Status.Phase))
-	}
-	if vmi.Status.NodeName != rec.Spec.SourceNode {
-		return e.fail(ctx, rec, fmt.Sprintf("VMI moved to %s since the recommendation was made", vmi.Status.NodeName))
-	}
-	name := migrationName(rec.Name)
-	mig := &kubevirtv1.VirtualMachineInstanceMigration{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: rec.Namespace,
-			Labels:    map[string]string{drsv1alpha1.LabelRecommendation: rec.Name},
-			Annotations: map[string]string{
-				drsv1alpha1.AnnotationLastReason: rec.Spec.Reason,
+	if own == nil {
+		var vmi kubevirtv1.VirtualMachineInstance
+		if err := e.Client.Get(ctx, types.NamespacedName{Namespace: rec.Namespace, Name: rec.Spec.VMI}, &vmi); err != nil {
+			if apierrors.IsNotFound(err) {
+				return e.fail(ctx, rec, "VMI no longer exists")
+			}
+			return err
+		}
+		if vmi.Status.Phase != kubevirtv1.Running {
+			return e.fail(ctx, rec, fmt.Sprintf("VMI is %s, not Running", vmi.Status.Phase))
+		}
+		if vmi.Status.NodeName != rec.Spec.SourceNode {
+			return e.fail(ctx, rec, fmt.Sprintf("VMI moved to %s since the recommendation was made", vmi.Status.NodeName))
+		}
+		mig := &kubevirtv1.VirtualMachineInstanceMigration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: rec.Namespace,
+				Labels:    map[string]string{drsv1alpha1.LabelRecommendation: rec.Name},
+				Annotations: map[string]string{
+					drsv1alpha1.AnnotationLastReason: rec.Spec.Reason,
+				},
 			},
-		},
-		Spec: kubevirtv1.VirtualMachineInstanceMigrationSpec{
-			VMIName:           rec.Spec.VMI,
-			AddedNodeSelector: map[string]string{corev1.LabelHostname: rec.Spec.TargetNode},
-		},
-	}
-	if err := e.Client.Create(ctx, mig); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			// KubeVirt's webhook rejects a migration of a VMI that is already migrating, not migratable, ...
-			return e.fail(ctx, rec, "create migration: "+strings.TrimSpace(err.Error()))
+			Spec: kubevirtv1.VirtualMachineInstanceMigrationSpec{
+				VMIName:           rec.Spec.VMI,
+				AddedNodeSelector: map[string]string{corev1.LabelHostname: rec.Spec.TargetNode},
+			},
+		}
+		if cerr := e.Client.Create(ctx, mig); cerr != nil {
+			// Maybe the cache just has not seen the earlier attempt's migration yet: KubeVirt's webhook answers
+			// "in-flight migration detected" for it, never AlreadyExists. Ask the API server before giving up.
+			if own, err = e.ownMigration(ctx, e.reader(), rec, name); err != nil {
+				return err
+			}
+			if own == nil {
+				// The webhook rejects a migration of a VMI that is already migrating (someone else's), not
+				// migratable, ...
+				return e.fail(ctx, rec, "create migration: "+strings.TrimSpace(cerr.Error()))
+			}
 		}
 	}
-	rec.Status.Phase = drsv1alpha1.PhaseApplied
-	rec.Status.Migration = name
-	rec.Status.AppliedAt = &metav1.Time{Time: now}
-	rec.Status.Message = fmt.Sprintf("migration %s created, target %s", name, rec.Spec.TargetNode)
-	meta.SetStatusCondition(&rec.Status.Conditions, metav1.Condition{
-		Type: "MigrationCreated", Status: metav1.ConditionTrue, Reason: "Applied", Message: rec.Status.Message,
-		ObservedGeneration: rec.Generation,
+	applied := now
+	if own != nil {
+		var latest drsv1alpha1.DRSRecommendation
+		if err := e.reader().Get(ctx, client.ObjectKeyFromObject(rec), &latest); err == nil &&
+			latest.Status.Phase == drsv1alpha1.PhaseApplied && latest.Status.Migration == name {
+			latest.DeepCopyInto(rec) // the winner finished the bookkeeping
+			return nil
+		}
+		applied = own.CreationTimestamp.Time
+	}
+	msg := fmt.Sprintf("migration %s created, target %s", name, rec.Spec.TargetNode)
+	err = e.updateStatus(ctx, rec, func(r *drsv1alpha1.DRSRecommendation) {
+		r.Status.Phase = drsv1alpha1.PhaseApplied
+		r.Status.Migration = name
+		r.Status.AppliedAt = &metav1.Time{Time: applied}
+		r.Status.Message = msg
+		meta.SetStatusCondition(&r.Status.Conditions, metav1.Condition{
+			Type: "MigrationCreated", Status: metav1.ConditionTrue, Reason: "Applied", Message: msg,
+			ObservedGeneration: r.Generation,
+		})
 	})
-	if err := e.Client.Status().Update(ctx, rec); err != nil {
+	if err != nil {
 		return fmt.Errorf("update recommendation %s/%s status: %w", rec.Namespace, rec.Name, err)
+	}
+	var vmi kubevirtv1.VirtualMachineInstance
+	if err := e.Client.Get(ctx, types.NamespacedName{Namespace: rec.Namespace, Name: rec.Spec.VMI}, &vmi); err != nil {
+		return client.IgnoreNotFound(err) // gone between the migration and now: nothing left to stamp
 	}
 	patch := client.MergeFrom(vmi.DeepCopy())
 	if vmi.Annotations == nil {
@@ -239,13 +286,54 @@ func (e *Executor) SyncScoreAnnotation(ctx context.Context, vmi *kubevirtv1.Virt
 }
 
 func (e *Executor) fail(ctx context.Context, rec *drsv1alpha1.DRSRecommendation, msg string) error {
-	rec.Status.Phase = drsv1alpha1.PhaseFailed
-	rec.Status.Message = msg
-	meta.SetStatusCondition(&rec.Status.Conditions, metav1.Condition{Type: "MigrationCreated", Status: metav1.ConditionFalse, Reason: "Failed", Message: msg, ObservedGeneration: rec.Generation})
-	if err := e.Client.Status().Update(ctx, rec); err != nil {
+	err := e.updateStatus(ctx, rec, func(r *drsv1alpha1.DRSRecommendation) {
+		r.Status.Phase = drsv1alpha1.PhaseFailed
+		r.Status.Message = msg
+		meta.SetStatusCondition(&r.Status.Conditions, metav1.Condition{Type: "MigrationCreated", Status: metav1.ConditionFalse, Reason: "Failed", Message: msg, ObservedGeneration: r.Generation})
+	})
+	if err != nil {
 		return fmt.Errorf("mark %s/%s Failed: %w", rec.Namespace, rec.Name, err)
 	}
 	return nil
+}
+
+// ownMigration returns the migration `name` when it exists and carries this recommendation's label, nil when
+// there is none; a same-named migration that is not ours is reported as an error.
+func (e *Executor) ownMigration(ctx context.Context, r client.Reader, rec *drsv1alpha1.DRSRecommendation, name string) (*kubevirtv1.VirtualMachineInstanceMigration, error) {
+	var mig kubevirtv1.VirtualMachineInstanceMigration
+	if err := r.Get(ctx, types.NamespacedName{Namespace: rec.Namespace, Name: name}, &mig); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if mig.Labels[drsv1alpha1.LabelRecommendation] != rec.Name {
+		return nil, fmt.Errorf("migration %s/%s exists but is not ours (label %s=%q)", rec.Namespace, name, drsv1alpha1.LabelRecommendation, mig.Labels[drsv1alpha1.LabelRecommendation])
+	}
+	return &mig, nil
+}
+
+// updateStatus applies mutate to rec and writes its status. On a conflict (Recommend's Pending write or the
+// cycle's re-validation landed between our read and this write) it re-reads the latest copy from the API
+// server, applies mutate again and retries; rec ends up holding what was written.
+func (e *Executor) updateStatus(ctx context.Context, rec *drsv1alpha1.DRSRecommendation, mutate func(*drsv1alpha1.DRSRecommendation)) error {
+	mutate(rec)
+	err := e.Client.Status().Update(ctx, rec)
+	if !apierrors.IsConflict(err) {
+		return err
+	}
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var latest drsv1alpha1.DRSRecommendation
+		if err := e.reader().Get(ctx, client.ObjectKeyFromObject(rec), &latest); err != nil {
+			return err
+		}
+		mutate(&latest)
+		if err := e.Client.Status().Update(ctx, &latest); err != nil {
+			return err
+		}
+		latest.DeepCopyInto(rec)
+		return nil
+	})
 }
 
 func recName(vmi string, now time.Time) string {

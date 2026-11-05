@@ -97,7 +97,7 @@ func main() {
 		log.Error(err, "unable to create manager")
 		os.Exit(1)
 	}
-	exec := &executor.Executor{Client: mgr.GetClient(), Recorder: mgr.GetEventRecorder("kubevirt-drs")}
+	exec := &executor.Executor{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Recorder: mgr.GetEventRecorder("kubevirt-drs")}
 	cycle := &controller.Cycle{Client: mgr.GetClient(), Prom: prom, Exec: exec, Log: ctrl.Log.WithName("cycle")}
 	if err := mgr.Add(cycle); err != nil {
 		log.Error(err, "unable to add the cycle runner")
