@@ -12,7 +12,9 @@ concurrency:
 jobs:
   kind:
     name: kind + KubeVirt ${{ matrix.kubevirt }} (emulation)   # one per matrix entry; "e2e" below is the stable name to require
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: that label moved to ubuntu-26.04 (kernel 7.0) between 2026-11-05 and 2026-11-15, and
+    # there KubeVirt v1.9.1's virt-handler crash-loops inside the kind nodes, so KubeVirt never turns Available.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
