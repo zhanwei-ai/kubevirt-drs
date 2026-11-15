@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+### Changed
+- `spec.paused: true` is now a complete off switch: the soft tainter stops and
+  removes the `drs.zhanwei.ai/hot` taints it had set (before, only the planning step was skipped and hot nodes kept
+  being tainted), and pending unapproved recommendations are expired at the next cycle ("the policy is paused"), so a
+  late approval can no longer start a migration while DRS is off. Scoring and the score annotation go on.
+
 ## [0.3.2] - 2026-11-05
 
 Patch release from the FullyAutomated acceptance run on the jade-platform demo cluster (2026-11-05): a recommendation the brain applied itself no longer ends `Failed` after the cycle and the reconciler race each other to create the migration.

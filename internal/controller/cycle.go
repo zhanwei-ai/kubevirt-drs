@@ -134,6 +134,12 @@ func (c *Cycle) Start(ctx context.Context) error {
 	}
 }
 
+// softTainterOn: the tainter runs only while the policy is not paused. Paused is the off switch, and
+// tainter.Reconcile(enabled=false) also removes the taints that are already there.
+func softTainterOn(spec drsv1alpha1.DRSPolicySpec) bool {
+	return spec.SoftTainter != nil && *spec.SoftTainter && !spec.Paused
+}
+
 // run executes one cycle and returns the interval to wait before the next one.
 func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 	start := time.Now()
@@ -284,6 +290,10 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 		byKey[vms[i].Key] = &vms[i]
 	}
 	if n, err := c.Exec.ExpireStale(ctx, func(rec *drsv1alpha1.DRSRecommendation) string {
+		if pol.Spec.Paused {
+			// paused = off: the reconciler would still apply a pending recommendation approved late
+			return "the policy is paused"
+		}
 		return planner.Stale(byKey[planner.Key{Namespace: rec.Namespace, Name: rec.Spec.VMI}], rec.Spec.SourceNode, rec.Spec.TargetNode, nodes, pp)
 	}); err != nil {
 		return interval, err
@@ -338,7 +348,7 @@ func (c *Cycle) run(ctx context.Context) (time.Duration, error) {
 	}
 
 	// ---- soft tainter -----------------------------------------------------------------------------
-	softTainter := pol.Spec.SoftTainter != nil && *pol.Spec.SoftTainter
+	softTainter := softTainterOn(pol.Spec)
 	hotNodes, changedTaints, err := tainter.Reconcile(ctx, c.Client, nodeList.Items, tainter.Hot(nodes, pp, tainter.Tainted(nodeList.Items)), softTainter)
 	if err != nil {
 		return interval, err

@@ -120,8 +120,9 @@ spec:
                 - Aggressive
                 type: string
               paused:
-                description: 'Paused: keep scoring and expiring, but create no recommendation
-                  and apply nothing. Emergency brake.'
+                description: |-
+                  Paused: the off switch. Keep scoring, but create no recommendation, apply nothing, expire the
+                  pending unapproved recommendations and remove the soft taints.
                 type: boolean
               recommendationTTL:
                 default: 10m

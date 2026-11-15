@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	drsv1alpha1 "github.com/zhanwei-ai/kubevirt-drs/api/v1alpha1"
 	"github.com/zhanwei-ai/kubevirt-drs/internal/planner"
 )
 
@@ -52,5 +53,23 @@ func TestCostBandwidth(t *testing.T) {
 	}
 	if got := costBandwidth(0, 0); got != 0 {
 		t.Fatalf("unknown stays 0 (planner default applies): %v", got)
+	}
+}
+
+func TestSoftTainterOn(t *testing.T) {
+	on, off := true, false
+	for _, c := range []struct {
+		name string
+		spec drsv1alpha1.DRSPolicySpec
+		want bool
+	}{
+		{"unset", drsv1alpha1.DRSPolicySpec{}, false},
+		{"off", drsv1alpha1.DRSPolicySpec{SoftTainter: &off}, false},
+		{"on", drsv1alpha1.DRSPolicySpec{SoftTainter: &on}, true},
+		{"on but paused", drsv1alpha1.DRSPolicySpec{SoftTainter: &on, Paused: true}, false},
+	} {
+		if got := softTainterOn(c.spec); got != c.want {
+			t.Errorf("%s: softTainterOn=%v want %v", c.name, got, c.want)
+		}
 	}
 }

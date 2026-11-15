@@ -158,7 +158,8 @@ type DRSPolicySpec struct {
 	// +kubebuilder:default=false
 	// +optional
 	SoftTainter *bool `json:"softTainter,omitempty"`
-	// Paused: keep scoring and expiring, but create no recommendation and apply nothing. Emergency brake.
+	// Paused: the off switch. Keep scoring, but create no recommendation, apply nothing, expire the
+	// pending unapproved recommendations and remove the soft taints.
 	// +optional
 	Paused bool `json:"paused,omitempty"`
 }
