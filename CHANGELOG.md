@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows Keep
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-15
+
+Patch release for platforms that use `spec.paused` as the on / off switch for DRS (jade-platform does since 2026-11-15): pausing the policy now stops everything the brain does to the cluster, not only the planning step.
+
 ### Changed
 - `spec.paused: true` is now a complete off switch: the soft tainter stops and
   removes the `drs.zhanwei.ai/hot` taints it had set (before, only the planning step was skipped and hot nodes kept
@@ -109,7 +113,8 @@ Score-only release: installs the DRS Score, moves nothing. The controller arrive
 - Design docs and ADRs.
 - Release pipeline: image and chart on GHCR, cosign keyless signatures, CycloneDX SBOM attestation, GitHub release with a post-publish verification job.
 
-[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/zhanwei-ai/kubevirt-drs/compare/v0.2.0...v0.3.0
